@@ -12,6 +12,7 @@ from .multiscale import MultiscaleAnalyzer
 from .ocr import LightweightOCRError, enrich_scene_with_ocr
 from .scene_grammar import enrich_scene_grammar
 from .serialize import to_llm_context
+from .specialized_detectors import enrich_specialized_detectors
 from .structure import enrich_structure
 from .text_structure import enrich_text_structure
 
@@ -47,6 +48,7 @@ def analyze_image(
 
     enrich_text_structure(scene)
     enrich_domain_routing(scene)
+    enrich_specialized_detectors(scene, path)
     enrich_scene_grammar(scene)
 
     if micro_vlm_dir is not None:
