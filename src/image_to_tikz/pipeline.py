@@ -8,6 +8,7 @@ from .analyzer_api import ImageAnalyzer
 from .canonical_graph import enrich_canonical_graph
 from .curves import enrich_curves
 from .domain_router import enrich_domain_routing
+from .llama_server_vlm import LlamaServerVLMError, enrich_scene_with_llama_server_vlm
 from .micro_vlm import enrich_scene_with_micro_vlm
 from .multiscale import MultiscaleAnalyzer
 from .ocr import LightweightOCRError, enrich_scene_with_ocr
@@ -25,14 +26,21 @@ def analyze_image(
     multiscale: bool = True,
     ocr: str = "auto",
     ocr_score_threshold: float = 0.35,
+    micro_vlm_backend: str = "none",
     micro_vlm_dir: str | Path | None = None,
     micro_vlm_device: str = "auto",
+    micro_vlm_model_path: str | Path | None = None,
+    micro_vlm_mmproj_path: str | Path | None = None,
+    micro_vlm_base_url: str = "http://127.0.0.1:8080/v1",
+    micro_vlm_model_name: str = "SmolVLM2-2.2B-Instruct",
     micro_vlm_max_crops: int = 8,
     micro_vlm_max_model_bytes: int = 2_500_000_000,
 ) -> tuple[Any, str]:
     """Run deterministic image analysis with optional lightweight semantic inspection."""
     if ocr not in {"auto", "on", "off"}:
         raise ValueError("ocr must be one of: auto, on, off")
+    if micro_vlm_backend not in {"none", "transformers", "llama-server"}:
+        raise ValueError("micro_vlm_backend must be one of: none, transformers, llama-server")
 
     path = str(image_path)
     scene = MultiscaleAnalyzer().analyze(path) if multiscale else ImageAnalyzer().analyze(path)
@@ -55,7 +63,9 @@ def analyze_image(
     enrich_canonical_graph(scene)
     enrich_provenance(scene)
 
-    if micro_vlm_dir is not None:
+    if micro_vlm_backend == "transformers":
+        if micro_vlm_dir is None:
+            raise ValueError("micro_vlm_dir is required when micro_vlm_backend='transformers'")
         enrich_scene_with_micro_vlm(
             scene,
             path,
@@ -64,6 +74,23 @@ def analyze_image(
             max_crops=micro_vlm_max_crops,
             max_model_bytes=micro_vlm_max_model_bytes,
         )
+        enrich_provenance(scene)
+    elif micro_vlm_backend == "llama-server":
+        if micro_vlm_model_path is None or micro_vlm_mmproj_path is None:
+            raise ValueError("micro_vlm_model_path and micro_vlm_mmproj_path are required for llama-server backend")
+        try:
+            enrich_scene_with_llama_server_vlm(
+                scene,
+                path,
+                micro_vlm_model_path,
+                micro_vlm_mmproj_path,
+                base_url=micro_vlm_base_url,
+                model_name=micro_vlm_model_name,
+                max_crops=micro_vlm_max_crops,
+                max_model_bytes=micro_vlm_max_model_bytes,
+            )
+        except LlamaServerVLMError:
+            raise
         enrich_provenance(scene)
 
     return scene, to_llm_context(scene)
