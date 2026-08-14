@@ -23,12 +23,10 @@ def analyze_image(
     ocr_score_threshold: float = 0.35,
     micro_vlm_dir: str | Path | None = None,
     micro_vlm_device: str = "auto",
+    micro_vlm_max_crops: int = 8,
+    micro_vlm_max_model_bytes: int = 2_500_000_000,
 ) -> tuple[Any, str]:
-    """Run the complete image-to-VIR pipeline.
-
-    The default path is model-free. Optional lightweight OCR and an optional local
-    sub-1GB VLM can enrich semantic/text information without replacing geometry.
-    """
+    """Run deterministic image analysis with optional lightweight semantic inspection."""
     if ocr not in {"auto", "on", "off"}:
         raise ValueError("ocr must be one of: auto, on, off")
 
@@ -50,10 +48,14 @@ def analyze_image(
     enrich_scene_grammar(scene)
 
     if micro_vlm_dir is not None:
-        try:
-            enrich_scene_with_micro_vlm(scene, path, micro_vlm_dir, device=micro_vlm_device)
-        except MicroVLMError as exc:
-            raise
+        enrich_scene_with_micro_vlm(
+            scene,
+            path,
+            micro_vlm_dir,
+            device=micro_vlm_device,
+            max_crops=micro_vlm_max_crops,
+            max_model_bytes=micro_vlm_max_model_bytes,
+        )
 
     return scene, to_llm_context(scene)
 
