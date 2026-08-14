@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "image-to-tikz-compiler"
-version = "0.6.0"
-description = "Model-independent image analysis front-end with optional lightweight OCR and GPU-sized vision-language semantic inspection, producing an LLM-readable visual intermediate representation."
+version = "0.8.0"
+description = "Model-independent image analysis front-end with optional lightweight OCR, SmolVLM2 semantic inspection, LLM prompt generation and TikZ verification."
 requires-python = ">=3.10"
 dependencies = [
   "opencv-python>=4.9",
@@ -25,8 +25,12 @@ micro-vlm = [
   "transformers>=4.49,<6",
   "accelerate>=1.0",
 ]
+gui = [
+  "PySide6>=6.7,<7",
+]
 all = [
   "pytest>=8.0",
+  "PySide6>=6.7,<7",
   "rapidocr-onnxruntime>=1.4.0,<2; python_version<'3.13'",
   "rapidocr>=3.0,<4; python_version>='3.13'",
   "onnxruntime>=1.17,<2; python_version>='3.13'",
@@ -37,6 +41,7 @@ all = [
 
 [project.scripts]
 image-to-vir = "image_to_tikz.cli:main"
+image-to-tikz-studio = "image_to_tikz.gui:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]
