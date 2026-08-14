@@ -8,7 +8,8 @@ import cv2
 import numpy as np
 
 from .analyzer_api import ImageAnalyzer
-from .vir import BoundingBox, Point, VisualElement, VisualScene
+from .analyzer_core import ArrayImageAnalyzer
+from .vir import BoundingBox, Point, Relation, VisualElement, VisualScene
 
 
 @dataclass(frozen=True)
@@ -21,12 +22,13 @@ class AnalysisWindow:
 
 
 class MultiscaleAnalyzer:
-    """Run deterministic analysis globally and on overlapping local windows, then fuse results."""
+    """Analyze globally and on overlapping local windows, then fuse deterministically."""
 
     def __init__(self, overlap: float = 0.18, min_window: int = 320) -> None:
         self.overlap = max(0.05, min(overlap, 0.45))
         self.min_window = min_window
         self.base = ImageAnalyzer()
+        self.array_base = ArrayImageAnalyzer()
 
     def analyze(self, image_path: str | Path) -> VisualScene:
         path = Path(image_path)
@@ -43,27 +45,21 @@ class MultiscaleAnalyzer:
             crop = image[window.y:window.y + window.height, window.x:window.x + window.width]
             if crop.size == 0:
                 continue
-            crop_name = f"{window.name}.png"
-            crop_path = path.with_name(f".__multiscale_{crop_name}")
-            try:
-                ok = cv2.imwrite(str(crop_path), crop)
-                if not ok:
-                    continue
-                local_scene = self.base.analyze(crop_path)
-                window_records.append({"name": window.name, "bbox_px": [window.x, window.y, window.width, window.height], "elements": len(local_scene.elements)})
-                extra.extend(self._translate(local_scene.elements, window, local_scene.image))
-            finally:
-                try:
-                    crop_path.unlink(missing_ok=True)
-                except Exception:
-                    pass
+            local_scene = self.array_base.analyze_array(crop, virtual_path=f"<{window.name}>")
+            window_records.append({
+                "name": window.name,
+                "bbox_px": [window.x, window.y, window.width, window.height],
+                "elements": len(local_scene.elements),
+            })
+            extra.extend(self._translate(local_scene.elements, window))
 
-        base_scene.elements = self._fuse_elements(base_scene.elements + extra, w, h)
-        base_scene.relations = []
-        base_scene.relations.extend(self._spatial_relations(base_scene.elements, w, h))
+        base_scene.elements = self._fuse_elements(base_scene.elements + extra)
+        base_scene.relations = self._spatial_relations(base_scene.elements, w, h)
         base_scene.image["analysis_mode"] = "global_plus_overlapping_local_windows"
         base_scene.image["analysis_windows"] = window_records
-        base_scene.warnings.append("Multiscale fusion uses deterministic duplicate suppression; local windows improve small-detail recall but can still produce ambiguous classifications.")
+        base_scene.warnings.append(
+            "Multiscale fusion uses deterministic duplicate suppression; local windows improve small-detail recall but can still produce ambiguous classifications."
+        )
         base_scene.semantic_summary = self._summary(base_scene, len(window_records))
         return base_scene
 
@@ -80,17 +76,15 @@ class MultiscaleAnalyzer:
             xs.append(max(0, w - target_w))
         if not ys or ys[-1] != max(0, h - target_h):
             ys.append(max(0, h - target_h))
-        out = []
-        for yi, y in enumerate(ys):
-            for xi, x in enumerate(xs):
-                out.append(AnalysisWindow(x, y, min(target_w, w - x), min(target_h, h - y), f"window_{yi}_{xi}"))
-        return out
+        return [
+            AnalysisWindow(x, y, min(target_w, w - x), min(target_h, h - y), f"window_{yi}_{xi}")
+            for yi, y in enumerate(ys)
+            for xi, x in enumerate(xs)
+        ]
 
     @staticmethod
-    def _translate(elements: list[VisualElement], window: AnalysisWindow, image: dict[str, Any]) -> list[VisualElement]:
+    def _translate(elements: list[VisualElement], window: AnalysisWindow) -> list[VisualElement]:
         out: list[VisualElement] = []
-        ww = float(image.get("width", window.width) or window.width)
-        hh = float(image.get("height", window.height) or window.height)
         for e in elements:
             b = e.bbox
             shifted = BoundingBox(b.x + window.x, b.y + window.y, b.width, b.height)
@@ -100,11 +94,21 @@ class MultiscaleAnalyzer:
                 if key in geometry and geometry[key]:
                     geometry[key] = [geometry[key][0] + window.x, geometry[key][1] + window.y]
             geometry["source_window"] = window.name
-            out.append(VisualElement(id=f"{e.id}@{window.name}", kind=e.kind, bbox=shifted, center=c, confidence=min(0.95, e.confidence * 0.97), geometry=geometry, style=dict(e.style), labels=list(e.labels), text_refs=list(e.text_refs)))
+            out.append(VisualElement(
+                id=f"{e.id}@{window.name}",
+                kind=e.kind,
+                bbox=shifted,
+                center=c,
+                confidence=min(0.95, e.confidence * 0.97),
+                geometry=geometry,
+                style=dict(e.style),
+                labels=list(e.labels),
+                text_refs=list(e.text_refs),
+            ))
         return out
 
     @staticmethod
-    def _fuse_elements(elements: list[VisualElement], w: int, h: int) -> list[VisualElement]:
+    def _fuse_elements(elements: list[VisualElement]) -> list[VisualElement]:
         result: list[VisualElement] = []
         for e in sorted(elements, key=lambda item: (-item.confidence, item.kind != "line_segment")):
             duplicate = False
@@ -113,7 +117,11 @@ class MultiscaleAnalyzer:
                     continue
                 center_distance = float(np.hypot(e.center.x - q.center.x, e.center.y - q.center.y))
                 scale = max(8.0, min(e.bbox.width + e.bbox.height, q.bbox.width + q.bbox.height) * 0.08)
-                if center_distance <= scale and abs(e.bbox.width - q.bbox.width) <= max(10.0, q.bbox.width * 0.15) and abs(e.bbox.height - q.bbox.height) <= max(10.0, q.bbox.height * 0.15):
+                if (
+                    center_distance <= scale
+                    and abs(e.bbox.width - q.bbox.width) <= max(10.0, q.bbox.width * 0.15)
+                    and abs(e.bbox.height - q.bbox.height) <= max(10.0, q.bbox.height * 0.15)
+                ):
                     duplicate = True
                     break
             if not duplicate:
@@ -122,7 +130,6 @@ class MultiscaleAnalyzer:
 
     @staticmethod
     def _spatial_relations(elements: list[VisualElement], w: int, h: int):
-        from .vir import Relation
         relations = []
         diag = float(np.hypot(w, h))
         for i, a in enumerate(elements):
@@ -142,4 +149,8 @@ class MultiscaleAnalyzer:
         for e in scene.elements:
             kinds[e.kind] = kinds.get(e.kind, 0) + 1
         inventory = ", ".join(f"{n} {k}" for k, n in sorted(kinds.items()))
-        return f"Canvas {scene.image['width']}x{scene.image['height']}px analyzed globally and across {windows} overlapping local windows. Fused primitives: {inventory}. Candidate relations: {len(scene.relations)}."
+        return (
+            f"Canvas {scene.image['width']}x{scene.image['height']}px analyzed globally and across "
+            f"{windows} overlapping local windows. Fused primitives: {inventory}. "
+            f"Candidate relations: {len(scene.relations)}."
+        )
