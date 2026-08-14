@@ -11,13 +11,13 @@ def to_json(scene: VisualScene, indent: int = 2) -> str:
 
 
 def to_llm_context(scene: VisualScene) -> str:
-    """Serialize deterministic observations plus canonical graph and spatial/text structure."""
+    """Serialize deterministic observations plus canonical graph, provenance and spatial/text structure."""
     img = scene.image
     kinds = Counter(e.kind for e in scene.elements)
     w = float(img.get("width", img.get("width_px", 1)) or 1)
     h = float(img.get("height", img.get("height_px", 1)) or 1)
     lines = [
-        "IMAGE_TO_TIKZ_VISUAL_RECORD v1.0",
+        "IMAGE_TO_TIKZ_VISUAL_RECORD v1.1",
         "STATUS: deterministic computer-vision observations with optional lightweight OCR/VLM augmentation.",
         f"CANVAS: width={int(w)}px height={int(h)}px",
         "COORDINATE_SYSTEM: origin=top-left; x→right; y→down; normalized=(x/width,y/height)",
@@ -52,6 +52,18 @@ def to_llm_context(scene: VisualScene) -> str:
             lines.append(f"- {component['id']}: size={component['size']}; nodes={','.join(component['node_ids'])}")
         for edge in graph.get("edges", [])[:1200]:
             lines.append(f"- {edge['source']} --{edge['relation']}--> {edge['target']}; confidence={float(edge['confidence']):.2f}")
+
+    provenance = img.get("provenance")
+    if provenance:
+        lines.extend(["", "EVIDENCE_PROVENANCE:"])
+        summary = provenance.get("summary", {})
+        lines.append(f"- relation_count={summary.get('relation_count', 0)}")
+        for node_id, source in list(provenance.get("element_sources", {}).items())[:120]:
+            lines.append(f"- element={node_id}; source={source}")
+        for text_id, source in list(provenance.get("text_sources", {}).items())[:120]:
+            lines.append(f"- text={text_id}; source={source}")
+        for item in provenance.get("hypotheses", []):
+            lines.append(f"- hypothesis={item.get('type')}; source={item.get('provenance')}")
 
     if scene.semantic_summary:
         lines.extend(["", "SUMMARY:", scene.semantic_summary])
@@ -100,8 +112,9 @@ def to_llm_context(scene: VisualScene) -> str:
         "",
         "INTERPRETATION_RULES:",
         "- Treat geometry, coordinates, text-region locations, containment and ordering as observations.",
+        "- Treat provenance labels as audit metadata, not semantic truth.",
         "- Treat canonical graph edges, domain routing, specialized-detector roles, axis, arrowhead, dimension, symmetry, group, formula, OCR labels and VLM descriptions as hypotheses unless supported by measured evidence.",
-        "- Use canonical graph components to reconstruct connected visual subassemblies before deciding semantic roles.",
+        "- Use graph components to reconstruct connected visual subassemblies before deciding semantic roles.",
         "- Reconstruct topology and relative placement before deciding stylistic details.",
         "- Never fabricate unreadable labels. Preserve an undecoded text region when character content is unavailable.",
         "- When evidence conflicts, retain alternatives and lower confidence rather than silently selecting one.",
@@ -178,8 +191,9 @@ def h23(scene: VisualScene) -> float:
 
 def to_compact_prompt(scene: VisualScene) -> str:
     return (
-        "You are given a deterministic visual record with optional lightweight OCR, optional crop-based VLM hypotheses, domain-routed specialized detector evidence, and a canonical scene graph.\n"
+        "You are given a deterministic visual record with optional lightweight OCR, optional crop-based VLM hypotheses, domain-routed specialized detector evidence, canonical scene graph, and evidence provenance.\n"
         "Treat every measurement as evidence and every semantic interpretation as a hypothesis.\n"
+        "Use provenance only to understand where evidence came from, not as semantic truth.\n"
         "Use domain routing and specialized detector output only as priors. Do not replace measured geometry.\n"
         "Use graph components to reconstruct subassemblies and connection topology before semantic labeling.\n"
         "Infer the diagram class and topology first. Then generate compilable TikZ preserving geometry, ordering, containment, connections and text placement.\n\n"
