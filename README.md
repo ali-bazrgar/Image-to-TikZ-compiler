@@ -2,9 +2,11 @@
 
 A model-agnostic image understanding front-end for diagram-to-TikZ systems.
 
-## What this project does
+## Core idea
 
-The core problem is not simply image captioning. A TikZ-capable LLM needs a recoverable representation of **what is drawn and how the pieces relate to one another**. This repository therefore creates a Visual Intermediate Representation (VIR):
+The goal is not image captioning. A TikZ-capable LLM needs a recoverable representation of **what is drawn, where it is drawn, how objects connect, what text is present, and which observations are uncertain**.
+
+This repository therefore builds a Visual Intermediate Representation (VIR):
 
 ```text
 image
@@ -15,7 +17,7 @@ classical CV: contours + lines + geometry
   ↓
 OCR (optional)
   ↓
-spatial relations
+spatial + connection relations
   ↓
 VIR JSON + canonical LLM text
   ↓
@@ -26,7 +28,18 @@ any text LLM / code model
 TikZ
 ```
 
-The representation intentionally contains both machine-readable geometry and a short declarative description. This lets small or text-only models reason over the scene without needing to see the original image.
+The representation intentionally contains both machine-readable geometry and a declarative text rendering. This allows small or text-only models to reason over the scene without receiving the original pixels.
+
+## Current components
+
+- `vir.py`: canonical scene schema (elements, text blocks, relations, coordinate system).
+- `analyzer.py`: deterministic image analysis using OpenCV plus optional Tesseract OCR.
+- `graph.py`: line extraction, duplicate suppression, alignment/proximity relations and conservative arrowhead candidates.
+- `semantic.py`: fuses measured geometry with optional VLM hypotheses without replacing the measured geometry.
+- `vision.py`: adapter for any OpenAI-compatible multimodal endpoint.
+- `pipeline.py`: end-to-end deterministic analysis pipeline.
+- `serialize.py`: JSON, canonical context, and ready-to-use LLM prompt serialization.
+- `render.py`: debug visualization of detections.
 
 ## Install
 
@@ -34,49 +47,81 @@ The representation intentionally contains both machine-readable geometry and a s
 pip install -e .
 ```
 
-For OCR:
+For OCR and multimodal enrichment:
 
 ```bash
-pip install -e '.[ocr]'
+pip install -e '.[all]'
 ```
 
-Tesseract itself must also be installed on the operating system.
+Tesseract itself must also be installed on the operating system for OCR.
 
 ## Basic usage
+
+The original lightweight analyzer remains available:
 
 ```bash
 image-to-vir diagram.png --pretty -o scene.json --context scene.txt --prompt tikz-prompt.txt
 ```
 
-The three outputs have different jobs:
+For the richer geometry/relationship pipeline:
 
-* `scene.json`: full structured intermediate representation.
-* `scene.txt`: canonical, model-readable description of all detected facts.
-* `tikz-prompt.txt`: ready-to-send instruction for a text-only LLM.
+```bash
+image-to-vir diagram.png --full-pipeline --pretty \
+  -o scene.json \
+  --context scene.txt \
+  --debug-image debug.png
+```
+
+The outputs have distinct jobs:
+
+- `scene.json`: authoritative structured intermediate representation.
+- `scene.txt`: canonical, model-readable description of detected facts and relations.
+- `tikz-prompt.txt`: ready-to-send instruction for a text-only LLM.
+- `debug.png`: visual audit of what the deterministic detector actually found.
 
 ## Optional vision-model enrichment
 
-Any OpenAI-compatible multimodal server can be used as a second semantic observer. This is deliberately optional; the deterministic CV layer remains usable without a model.
-
-Example with a local OpenAI-compatible endpoint:
+Any OpenAI-compatible multimodal server can act as a second semantic observer:
 
 ```bash
-image-to-vir diagram.png --vision-url http://127.0.0.1:8080 --vision-model YOUR_MODEL --vision-json vision.json
+image-to-vir diagram.png --full-pipeline \
+  --vision-url http://127.0.0.1:8080 \
+  --vision-model YOUR_MODEL \
+  --vision-json vision.json
 ```
 
-The enrichment layer asks the vision model for scene type, semantic roles, approximate positions, relations, and uncertainties. It does **not** ask the model for TikZ. This separation is important: image interpretation and code generation become independent stages.
+The vision layer is deliberately **not** asked to produce TikZ. It reports scene type, semantic roles, approximate positions, relations, and uncertainties. The deterministic measurements remain the geometric source of truth.
 
-## VIR design principles
+## Design principles
 
-1. **Observation vs. interpretation**: detected lines, boxes and text are observations; semantic hypotheses are separate.
-2. **Geometry is explicit**: every object has a bounding box and center, with detailed primitive geometry where available.
-3. **Relations are first-class**: alignment, proximity and connection candidates are represented explicitly rather than forcing an LLM to infer them from raw coordinates.
-4. **Coordinate system is stated**: no hidden image-axis assumptions.
-5. **Redundancy is intentional**: JSON is authoritative; the textual serialization makes the same information easier for weaker language models to consume.
-6. **No model lock-in**: the core pipeline uses standard computer vision and optional OCR. A VLM is an enrichment backend, not a required dependency.
+1. **Observation vs. interpretation**: measured geometry and OCR are observations; semantic VLM statements are hypotheses.
+2. **Geometry is explicit**: every visual element has a bounding box and center, with primitive-specific geometry when available.
+3. **Relations are first-class**: alignment, proximity and connection candidates are represented explicitly.
+4. **Coordinates are explicit**: normalized coordinates use `x=0..1` left→right and `y=0..1` top→bottom.
+5. **Redundancy is intentional**: JSON is authoritative; canonical text makes the same information easier for weaker language models to consume.
+6. **Model independence**: the image-understanding backend and TikZ-generating LLM can be changed independently.
 
-## What this does not claim yet
+## Verification direction
 
-This first implementation is a strong front-end rather than a finished image-to-TikZ system. Classical CV cannot reliably infer every semantic object in engineering diagrams, arrows, mathematical notation, topology, or chart semantics. The optional VLM layer and a future domain-specific semantic parser are intended to address those gaps.
+The next stage is not simply “make the description longer”. It is a closed reconstruction loop:
 
-The next major stage should add: arrow-head detection, connected-component graph construction, axis/plot recognition, dimension-line recognition, shape-specific classifiers, crop-level analysis, confidence calibration, and a renderer-based verification loop (VIR → TikZ → PDF/SVG → image comparison).
+```text
+VIR → TikZ → LaTeX render → PNG/SVG
+                    ↓
+             compare with input
+                    ↓
+             discrepancy map
+                    ↓
+          repair constraints / VIR
+                    ↓
+                  TikZ
+```
+
+This provides an objective signal for geometry and topology errors and is the foundation for later automatic critique/correction.
+
+## Tests
+
+```bash
+pip install -e '.[test]'
+pytest
+```
