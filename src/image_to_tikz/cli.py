@@ -9,7 +9,7 @@ from .serialize import to_compact_prompt, to_json
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Convert an image into a deterministic, model-free visual representation for any downstream LLM."
+        description="Convert an image into a visual representation for any downstream LLM."
     )
     parser.add_argument("image", help="Input image path")
     parser.add_argument("-o", "--output", help="Output JSON path; defaults to stdout")
@@ -17,9 +17,22 @@ def main() -> int:
     parser.add_argument("--prompt", help="Write a ready-to-use text-only LLM prompt")
     parser.add_argument("--debug-image", help="Write an annotated PNG showing detected primitives")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
+    parser.add_argument("--no-multiscale", action="store_true", help="Disable global+local multi-scale analysis")
+    parser.add_argument(
+        "--ocr",
+        choices=("auto", "on", "off"),
+        default="auto",
+        help="Lightweight RapidOCR: auto=use when installed, on=require it, off=never use it",
+    )
+    parser.add_argument("--ocr-score", type=float, default=0.35, help="Minimum OCR confidence")
     args = parser.parse_args()
 
-    scene, context = analyze_image(args.image)
+    scene, context = analyze_image(
+        args.image,
+        multiscale=not args.no_multiscale,
+        ocr=args.ocr,
+        ocr_score_threshold=args.ocr_score,
+    )
     payload = to_json(scene, indent=2 if args.pretty else None)
 
     if args.output:
