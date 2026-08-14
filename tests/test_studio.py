@@ -16,9 +16,10 @@ def test_golden_prompt_contains_strict_reconstruction_contract(tmp_path):
     assert cv2.imwrite(str(path), image)
     scene, _ = analyze_image(path, multiscale=False, ocr="off")
     prompt = build_golden_prompt(scene)
-    assert "PRIMARY OBJECTIVE" in prompt
+    assert "expert scientific-figure reconstruction engine" in prompt
     assert "Output ONLY a single LaTeX/TikZ code block." in prompt
     assert "VISUAL RECORD" in prompt
+    assert "COMPACT VISUAL RECORD" in prompt
 
 
 def test_tikz_extractor_prefers_longest_code_block():
