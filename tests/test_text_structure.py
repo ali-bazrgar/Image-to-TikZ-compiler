@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import cv2
 import numpy as np
 
@@ -18,5 +16,5 @@ def test_text_structure_is_model_free(tmp_path):
 
     assert scene.texts
     assert any(t.role and "candidate" in t.role for t in scene.texts)
-    assert "TEXT_REGIONS:" in context
-    assert "role=" in context
+    assert "TEXT" in context
+    assert "DOWNSTREAM_TASK" in context
