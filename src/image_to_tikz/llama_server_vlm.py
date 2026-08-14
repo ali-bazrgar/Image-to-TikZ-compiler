@@ -62,7 +62,7 @@ def _get_json(url: str, *, timeout: float) -> dict[str, Any]:
 
 
 class LlamaServerVisionObserver:
-    def __init__(self, model_path: str | Path, mmproj_path: str | Path, *, base_url: str = "http://127.0.0.1:8080/v1", model_name: str = "SmolVLM2-2.2B-Instruct", timeout: float = 120.0, max_new_tokens: int = 180, max_model_bytes: int = RECOMMENDED_MAX_MODEL_BYTES) -> None:
+    def __init__(self, model_path: str | Path, mmproj_path: str | Path, *, base_url: str = "http://127.0.0.1:8080/v1", model_name: str = "SmolVLM2-2.2B-Instruct", timeout: float = 120.0, max_new_tokens: int = 96, max_model_bytes: int = RECOMMENDED_MAX_MODEL_BYTES) -> None:
         self.info = validate_gguf_pair(model_path, mmproj_path, max_bytes=max_model_bytes)
         self.base_url = base_url.rstrip("/")
         self.model_name = model_name
@@ -82,7 +82,6 @@ class LlamaServerVisionObserver:
         return props
 
     def describe(self, image_path: str | Path, *, visual_record: str = "", crop_reason: str = "whole_image") -> dict[str, Any]:
-        self.check_server()
         prompt = (
             "Analyze this scientific or technical diagram region. Give a concise semantic hypothesis about what it shows, "
             "visible symbols, labels, local relationships, and likely role in the whole figure. Do not invent exact coordinates. "
