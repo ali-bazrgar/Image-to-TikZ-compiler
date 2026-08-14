@@ -44,7 +44,7 @@ Optional lightweight OCR:
 pip install -e '.[ocr]'
 ```
 
-The optional OCR path uses RapidOCR/ONNX Runtime mobile-style models. Current RapidOCR/PaddleOCR documentation lists mobile detection and recognition models in the single- and tens-of-megabytes range, far below the project's 1 GB model limit. citeturn968545search2turn968545search3
+The OCR option uses RapidOCR with mobile-style ONNX models. The selected OCR models are in the single- and tens-of-megabytes range and are far below the project's 1 GB model limit. The adapter also checks local ONNX model files and rejects anything above 1 GB at runtime.
 
 No large VLM, large language model, inference server, API key, or network service is required by the compiler.
 
@@ -140,7 +140,7 @@ image-to-vir diagram.png --no-multiscale --ocr off
 
 Observed geometry is never silently replaced by semantic guesses. Candidates such as "arrowhead", "axis", "dimension line", "label", "symmetry" and "connection" remain explicitly marked as hypotheses with evidence/confidence.
 
-The compiler is independent of the downstream model. GPT, Qwen, Llama, Gemma or another text/code model can consume the same VIR. The only model-size restriction applies to optional models shipped/used by this compiler: **1 GB maximum**.
+The compiler is independent of the downstream model. GPT, Qwen, Llama, Gemma or another text/code model can consume the same VIR. The only model-size restriction applies to optional models used by this compiler: **1 GB maximum**.
 
 ## Verification direction
 
