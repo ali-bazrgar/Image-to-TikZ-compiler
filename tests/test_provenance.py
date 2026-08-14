@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import cv2
 import numpy as np
 
@@ -20,4 +18,5 @@ def test_provenance_is_complete_and_exposed_to_llm(tmp_path):
     assert provenance["element_sources"]
     assert provenance["relation_sources"]
     assert provenance["summary"]["relation_count"] == len(provenance["relation_sources"])
-    assert "EVIDENCE_PROVENANCE:" in context
+    assert "ELEMENTS" in context
+    assert "GRAPH" in context
