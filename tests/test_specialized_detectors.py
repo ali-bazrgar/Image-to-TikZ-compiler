@@ -18,4 +18,4 @@ def test_specialized_detectors_are_routed_and_recorded(tmp_path):
     assert result["method"] == "deterministic_domain_routed"
     assert result["detectors"]
     assert "detectors=" in scene.semantic_summary
-    assert "SPECIALIZED_DETECTORS" in context
+    assert "DETECTOR_EVIDENCE" in context
