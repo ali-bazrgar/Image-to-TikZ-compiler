@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from typing import Any
 
 from .vir import VisualElement, VisualScene
@@ -11,63 +12,72 @@ def to_json(scene: VisualScene, indent: int = 2) -> str:
 
 
 def to_llm_context(scene: VisualScene) -> str:
-    """Produce a model-agnostic textual scene description.
-
-    The text is deliberately redundant with the JSON: weaker models often recover
-    geometry and relationships more reliably from short declarative sentences.
-    """
-    lines: list[str] = []
+    """Serialize deterministic observations as a canonical, model-agnostic visual record."""
     img = scene.image
-    lines.append("VISUAL_SCENE_VIR v0.1")
-    lines.append(f"CANVAS: width={img['width']}px height={img['height']}px")
-    lines.append("COORDINATES: origin=top-left; x→right; y→down; normalized coordinates are x/width and y/height")
+    kinds = Counter(e.kind for e in scene.elements)
+    w = float(img.get("width", img.get("width_px", 1)) or 1)
+    h = float(img.get("height", img.get("height_px", 1)) or 1)
+    lines = [
+        "IMAGE_TO_TIKZ_VISUAL_RECORD v0.4",
+        "STATUS: deterministic computer-vision observations; no semantic model was used.",
+        f"CANVAS: width={int(w)}px height={int(h)}px",
+        "COORDINATE_SYSTEM: origin=top-left; x→right; y→down; normalized=(x/width,y/height)",
+        "",
+        "INVENTORY:",
+    ]
+    for kind, count in sorted(kinds.items()):
+        lines.append(f"- {kind}: {count}")
     if scene.semantic_summary:
-        lines.append("SUMMARY: " + scene.semantic_summary)
-    if scene.texts:
-        lines.append("TEXT:")
-        for t in scene.texts:
-            b = t.bbox
-            lines.append(f"- {t.id}: {t.text!r} at ({b.x:.1f},{b.y:.1f}) size ({b.width:.1f}x{b.height:.1f}) conf={t.confidence}")
+        lines.extend(["", "SUMMARY:", scene.semantic_summary])
     if scene.elements:
-        lines.append("ELEMENTS:")
+        lines.extend(["", "ELEMENTS:"])
         for e in scene.elements:
             b = e.bbox
-            cx, cy = e.center.x, e.center.y
-            geom = _geometry_sentence(e)
-            refs = f" labels={','.join(e.text_refs)}" if e.text_refs else ""
-            lines.append(
-                f"- {e.id}: type={e.kind}; center=({cx:.1f},{cy:.1f}); bbox=({b.x:.1f},{b.y:.1f},{b.width:.1f},{b.height:.1f}); confidence={e.confidence:.2f}; {geom}{refs}"
-            )
+            nb = (b.x / w, b.y / h, b.width / w, b.height / h)
+            lines.append(f"- {e.id}: kind={e.kind}; center_px=({e.center.x:.2f},{e.center.y:.2f}); bbox_px=({b.x:.2f},{b.y:.2f},{b.width:.2f},{b.height:.2f}); bbox_norm=({nb[0]:.5f},{nb[1]:.5f},{nb[2]:.5f},{nb[3]:.5f}); confidence={e.confidence:.2f}")
+            if e.geometry:
+                lines.append("  geometry=" + json.dumps(e.geometry, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+            if e.labels:
+                lines.append(f"  labels={e.labels}")
+            if e.text_refs:
+                lines.append(f"  nearby_text_regions={e.text_refs}")
+    if scene.texts:
+        lines.extend(["", "TEXT_REGIONS:"])
+        for t in scene.texts:
+            b = t.bbox
+            content = t.text if t.text else "[undecoded]"
+            lines.append(f"- {t.id}: content={content!r}; bbox_px=({b.x:.2f},{b.y:.2f},{b.width:.2f},{b.height:.2f}); center_px=({b.center.x:.2f},{b.center.y:.2f}); confidence={t.confidence}")
     if scene.relations:
-        lines.append("RELATIONS:")
+        lines.extend(["", "RELATIONS:"])
         for r in scene.relations:
-            ev = "" if not r.evidence else " " + json.dumps(r.evidence, ensure_ascii=False, separators=(",", ":"))
-            lines.append(f"- {r.source} --{r.relation}--> {r.target} confidence={r.confidence:.2f}{ev}")
+            evidence = "" if not r.evidence else " evidence=" + json.dumps(r.evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            lines.append(f"- {r.source} --{r.relation}--> {r.target}; confidence={r.confidence:.2f}{evidence}")
+    lines.extend([
+        "",
+        "INTERPRETATION_RULES:",
+        "- Treat geometry, coordinates, and detected text regions as observations.",
+        "- Treat names such as axis_or_baseline, symmetry, connection, or group membership as hypotheses unless supported by multiple observations.",
+        "- Preserve topology, repetition, alignment, relative scale, and spatial ordering before styling.",
+        "- Never fabricate unreadable labels; keep their region as undecoded text when character content is unavailable.",
+        "- When evidence conflicts, retain both candidates and lower confidence rather than silently choosing one.",
+        "",
+        "DOWNSTREAM_LLM_TASK:",
+        "Infer the most plausible diagram semantics from this record, then map the measured geometry into TikZ. Clearly separate observations from semantic hypotheses."
+    ])
     if scene.warnings:
-        lines.append("WARNINGS:")
+        lines.extend(["", "WARNINGS:"])
         lines.extend(f"- {w}" for w in scene.warnings)
-    lines.append("SEMANTIC_TASK: infer the likely diagram meaning only from the evidence above; distinguish observed facts from hypotheses.")
     return "\n".join(lines)
 
 
 def to_compact_prompt(scene: VisualScene) -> str:
-    """Prompt payload suitable for a generic text-only LLM before TikZ generation."""
-    context = to_llm_context(scene)
     return (
-        "You are given a deterministic visual intermediate representation of a raster diagram.\n"
-        "Treat ELEMENTS, TEXT and RELATIONS as observations. Do not invent coordinates or objects without marking them as hypotheses.\n"
-        "Infer the diagram's semantic structure, then generate TikZ that reproduces that structure.\n\n"
-        "<VIR>\n" + context + "\n</VIR>\n"
-        "Return: (1) a concise semantic interpretation, (2) TikZ code, (3) uncertainties."
+        "You are given a deterministic visual record produced without any AI model.\n"
+        "First infer the diagram's semantic structure from the evidence. Do not invent measurements.\n"
+        "Then generate compilable TikZ that preserves geometry and topology. Mark uncertain assumptions.\n\n"
+        "<VISUAL_RECORD>\n" + to_llm_context(scene) + "\n</VISUAL_RECORD>"
     )
 
 
 def _geometry_sentence(e: VisualElement) -> str:
-    g: dict[str, Any] = e.geometry
-    if e.kind == "line":
-        return f"line start={g.get('start')} end={g.get('end')} angle={g.get('angle_deg')}deg orientation={g.get('orientation')}"
-    if e.kind in {"rectangle", "polygon"}:
-        return f"vertices={g.get('vertices', [])}"
-    if e.kind == "circle_or_ellipse":
-        return f"shape circularity={g.get('circularity')} area={g.get('area_px2')}"
-    return "geometry=" + json.dumps(g, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(e.geometry, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
