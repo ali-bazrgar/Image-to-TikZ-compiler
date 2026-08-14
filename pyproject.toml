@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "image-to-tikz-compiler"
-version = "0.4.0"
-description = "Model-independent image analysis front-end with optional lightweight OCR, producing an LLM-readable visual intermediate representation."
+version = "0.5.0"
+description = "Model-independent image analysis front-end with optional sub-1GB vision-language and OCR adapters, producing an LLM-readable visual intermediate representation."
 requires-python = ">=3.10"
 dependencies = [
   "opencv-python>=4.9",
@@ -20,11 +20,19 @@ ocr = [
   "rapidocr>=3.0,<4; python_version>='3.13'",
   "onnxruntime>=1.17,<2; python_version>='3.13'",
 ]
+micro-vlm = [
+  "torch>=2.5",
+  "transformers>=4.49,<6",
+  "accelerate>=1.0",
+]
 all = [
   "pytest>=8.0",
   "rapidocr-onnxruntime>=1.4.0,<2; python_version<'3.13'",
   "rapidocr>=3.0,<4; python_version>='3.13'",
   "onnxruntime>=1.17,<2; python_version>='3.13'",
+  "torch>=2.5",
+  "transformers>=4.49,<6",
+  "accelerate>=1.0",
 ]
 
 [project.scripts]
