@@ -6,6 +6,7 @@ from typing import Any
 
 from .analyzer_api import ImageAnalyzer
 from .curves import enrich_curves
+from .micro_vlm import MicroVLMError, enrich_scene_with_micro_vlm
 from .multiscale import MultiscaleAnalyzer
 from .ocr import LightweightOCRError, enrich_scene_with_ocr
 from .scene_grammar import enrich_scene_grammar
@@ -20,12 +21,13 @@ def analyze_image(
     multiscale: bool = True,
     ocr: str = "auto",
     ocr_score_threshold: float = 0.35,
+    micro_vlm_dir: str | Path | None = None,
+    micro_vlm_device: str = "auto",
 ) -> tuple[Any, str]:
     """Run the complete image-to-VIR pipeline.
 
-    The core is deterministic. Optional lightweight OCR may be enabled with
-    ``ocr='on'`` or automatically used with ``ocr='auto'`` when installed.
-    The OCR adapter accepts only lightweight models below the project's 1 GB limit.
+    The default path is model-free. Optional lightweight OCR and an optional local
+    sub-1GB VLM can enrich semantic/text information without replacing geometry.
     """
     if ocr not in {"auto", "on", "off"}:
         raise ValueError("ocr must be one of: auto, on, off")
@@ -46,6 +48,13 @@ def analyze_image(
 
     enrich_text_structure(scene)
     enrich_scene_grammar(scene)
+
+    if micro_vlm_dir is not None:
+        try:
+            enrich_scene_with_micro_vlm(scene, path, micro_vlm_dir, device=micro_vlm_device)
+        except MicroVLMError as exc:
+            raise
+
     return scene, to_llm_context(scene)
 
 
