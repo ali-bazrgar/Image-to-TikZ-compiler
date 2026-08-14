@@ -37,9 +37,10 @@ def validate_gguf_pair(
         if path.suffix.lower() != ".gguf":
             raise LlamaServerVLMError(f"Expected a .gguf file: {path}")
     total = model.stat().st_size + mmproj.stat().st_size
-    if total > min(max_bytes, MAX_ALLOWED_MODEL_BYTES):
+    ceiling = min(int(max_bytes), MAX_ALLOWED_MODEL_BYTES)
+    if total > ceiling:
         raise LlamaServerVLMError(
-            f"GGUF model + mmproj total {total} bytes, exceeding the configured ceiling {max_bytes} bytes"
+            f"GGUF model + mmproj total {total} bytes, exceeding the configured ceiling {ceiling} bytes"
         )
     return GGUFModelInfo(str(model), str(mmproj), total)
 
@@ -123,6 +124,76 @@ class LlamaServerVisionObserver:
         if not isinstance(text, str) or not text.strip():
             raise LlamaServerVLMError("llama.cpp vision server returned an empty semantic response")
         return {"text": text.strip(), "model": self.model_name, "weight_bytes": self.info.total_bytes}
+
+
+def enrich_scene_with_llama_server_vlm(
+    scene: Any,
+    image_path: str | Path,
+    model_path: str | Path,
+    mmproj_path: str | Path,
+    *,
+    base_url: str = "http://127.0.0.1:8080/v1",
+    model_name: str = "SmolVLM2-2.2B-Instruct",
+    max_crops: int = 8,
+    max_model_bytes: int = RECOMMENDED_MAX_MODEL_BYTES,
+) -> Any:
+    """Analyze only selected high-value crops through a running llama.cpp vision server."""
+    from .semantic_crops import crop_image, select_semantic_crops
+    from .serialize import to_llm_context
+
+    observer = LlamaServerVisionObserver(
+        model_path,
+        mmproj_path,
+        base_url=base_url,
+        model_name=model_name,
+        max_model_bytes=max_model_bytes,
+    )
+    crops = select_semantic_crops(scene, image_path, max_crops=max_crops)
+    if not crops:
+        scene.warnings.append("LLAMA_SERVER_VLM skipped: no high-value semantic crops were selected.")
+        return scene
+
+    temp_dir = Path(image_path).parent / ".semantic_crops_llama"
+    hypotheses: list[dict[str, Any]] = []
+    try:
+        for crop in crops:
+            crop_path = crop_image(image_path, crop, temp_dir)
+            result = observer.describe(
+                crop_path,
+                visual_record=to_llm_context(scene),
+                crop_reason=", ".join(crop.reasons),
+            )
+            hypotheses.append({
+                "crop_id": crop.id,
+                "bbox_px": [crop.bbox.x, crop.bbox.y, crop.bbox.width, crop.bbox.height],
+                "reasons": list(crop.reasons),
+                "priority": crop.priority,
+                "text": result["text"],
+            })
+    finally:
+        for path in temp_dir.glob("*.png"):
+            path.unlink(missing_ok=True)
+        try:
+            temp_dir.rmdir()
+        except OSError:
+            pass
+
+    scene.image["micro_vlm"] = {
+        "enabled": True,
+        "backend": "llama.cpp-server",
+        "model": model_name,
+        "model_path": str(model_path),
+        "mmproj_path": str(mmproj_path),
+        "endpoint": base_url,
+        "weight_bytes_including_mmproj": observer.info.total_bytes,
+        "hard_model_limit_bytes": MAX_ALLOWED_MODEL_BYTES,
+        "recommended_model_limit_bytes": RECOMMENDED_MAX_MODEL_BYTES,
+        "crops_analyzed": len(hypotheses),
+        "policy": "semantic hypotheses only; authoritative geometry remains deterministic",
+    }
+    scene.image["micro_vlm_hypotheses"] = hypotheses
+    scene.warnings.append("LLAMA_SERVER_VLM output is a semantic hypothesis and must not override measured geometry or topology.")
+    return scene
 
 
 def build_llama_server_command(
