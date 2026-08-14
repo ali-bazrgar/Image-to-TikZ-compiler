@@ -1,3 +1,3 @@
-"""Image-to-TikZ visual analysis toolkit with an optional sub-1GB OCR adapter."""
+"""Image-to-TikZ visual analysis toolkit with a model-free core and optional lightweight observers."""
 
-__version__ = "0.4.0"
+__version__ = "0.7.0"
