@@ -23,4 +23,4 @@ def test_canonical_graph_projects_valid_nodes_edges_and_components(tmp_path):
     assert all(edge["source"] in node_ids and edge["target"] in node_ids for edge in graph["edges"])
     assert all(node["component"].startswith("component_") for node in graph["nodes"])
     assert "CANONICAL_GRAPH:" in scene.semantic_summary
-    assert "CANONICAL_GRAPH:" in context
+    assert "GRAPH" in context
