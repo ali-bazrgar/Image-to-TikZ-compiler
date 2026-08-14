@@ -91,11 +91,10 @@ class ModelFreeImageAnalyzer:
             minLineLength=max(12, min(gray.shape[:2]) // 28),
             maxLineGap=max(5, min(gray.shape[:2]) // 120),
         )
-        out: list[VisualElement] = []
         if lines is None:
-            return out
-        # OpenCV versions may return shape (N, 1, 4) or (N, 4).
+            return []
         rows = np.asarray(lines).reshape(-1, 4)
+        raw: list[VisualElement] = []
         for i, row in enumerate(rows, 1):
             x1, y1, x2, y2 = map(int, row)
             length = math.hypot(x2 - x1, y2 - y1)
@@ -104,14 +103,109 @@ class ModelFreeImageAnalyzer:
             angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
             a = angle % 180
             orient = "horizontal" if min(a, abs(a - 180)) < 3 else ("vertical" if abs(a - 90) < 3 else "diagonal")
-            out.append(VisualElement(
+            raw.append(VisualElement(
                 id=f"line_{i}", kind="line_segment",
                 bbox=BoundingBox(round(min(x1, x2) / scale, 2), round(min(y1, y2) / scale, 2), round(abs(x2 - x1) / scale, 2), round(abs(y2 - y1) / scale, 2)),
                 center=Point(round((x1 + x2) / (2 * scale), 2), round((y1 + y2) / (2 * scale), 2)),
                 confidence=0.72,
                 geometry={"start_px": [round(x1 / scale, 2), round(y1 / scale, 2)], "end_px": [round(x2 / scale, 2), round(y2 / scale, 2)], "length_px": round(length / scale, 2), "angle_deg": round(angle, 2), "orientation": orient, "endpoint_candidates": self._endpoint_candidates(gray, x1, y1, x2, y2, scale)},
             ))
-        return out
+        return self._merge_collinear_segments(raw, scale)
+
+    @staticmethod
+    def _merge_collinear_segments(elements: list[VisualElement], scale: float) -> list[VisualElement]:
+        """Merge nearly collinear, overlapping/nearby Hough segments into canonical strokes."""
+        clusters: list[list[VisualElement]] = []
+        angle_tol = math.radians(2.5)
+        normal_tol = max(2.5, 4.0 / max(scale, 1e-6))
+        gap_tol = max(10.0, 14.0 / max(scale, 1e-6))
+
+        def segment_data(e: VisualElement):
+            s = e.geometry["start_px"]
+            t = e.geometry["end_px"]
+            p = np.array(s, dtype=float)
+            q = np.array(t, dtype=float)
+            d = q - p
+            nrm = float(np.linalg.norm(d)) or 1.0
+            u = d / nrm
+            angle = math.atan2(float(u[1]), float(u[0]))
+            while angle < 0:
+                angle += math.pi
+            while angle >= math.pi:
+                angle -= math.pi
+            normal = np.array([-u[1], u[0]], dtype=float)
+            midpoint = (p + q) * 0.5
+            offset = float(np.dot(midpoint, normal))
+            t0 = float(np.dot(p, u))
+            t1 = float(np.dot(q, u))
+            return p, q, u, normal, angle, offset, min(t0, t1), max(t0, t1)
+
+        reps: list[tuple] = []
+        for element in sorted(elements, key=lambda e: -float(e.geometry.get("length_px", 0))):
+            data = segment_data(element)
+            p, q, u, normal, angle, offset, lo, hi = data
+            assigned = False
+            for idx, rep in enumerate(reps):
+                r_p, r_q, r_u, r_n, r_angle, r_offset, r_lo, r_hi = rep
+                diff = abs(angle - r_angle)
+                diff = min(diff, math.pi - diff)
+                if diff > angle_tol:
+                    continue
+                if abs(offset - r_offset) > normal_tol:
+                    continue
+                projected_gap = max(r_lo, lo) - min(r_hi, hi)
+                if projected_gap > gap_tol:
+                    continue
+                clusters[idx].append(element)
+                # Recompute representative from the longest member plus current endpoints.
+                all_members = clusters[idx]
+                points = []
+                for member in all_members:
+                    s = np.array(member.geometry["start_px"], dtype=float)
+                    t = np.array(member.geometry["end_px"], dtype=float)
+                    points.extend([s, t])
+                ts = [float(np.dot(pt, r_u)) for pt in points]
+                new_lo, new_hi = min(ts), max(ts)
+                origin = r_n * r_offset
+                new_p = origin + r_u * new_lo
+                new_q = origin + r_u * new_hi
+                reps[idx] = (new_p, new_q, r_u, r_n, r_angle, r_offset, new_lo, new_hi)
+                assigned = True
+                break
+            if not assigned:
+                clusters.append([element])
+                reps.append(data)
+
+        merged: list[VisualElement] = []
+        for idx, (members, rep) in enumerate(zip(clusters, reps), 1):
+            _, _, u, normal, angle, offset, lo, hi = rep
+            origin = normal * offset
+            p = origin + u * lo
+            q = origin + u * hi
+            length = float(np.linalg.norm(q - p))
+            conf = min(0.94, max(m.confidence for m in members) + 0.02 * min(len(members) - 1, 5))
+            angle_deg = math.degrees(angle)
+            if angle_deg >= 90:
+                angle_deg -= 180
+            a = angle_deg % 180
+            orient = "horizontal" if min(a, abs(a - 180)) < 3 else ("vertical" if abs(a - 90) < 3 else "diagonal")
+            merged.append(VisualElement(
+                id=f"line_{idx}",
+                kind="line_segment",
+                bbox=BoundingBox(min(p[0], q[0]), min(p[1], q[1]), abs(q[0] - p[0]), abs(q[1] - p[1])),
+                center=Point(float((p[0] + q[0]) / 2), float((p[1] + q[1]) / 2)),
+                confidence=round(conf, 3),
+                geometry={
+                    "start_px": [round(float(p[0]), 2), round(float(p[1]), 2)],
+                    "end_px": [round(float(q[0]), 2), round(float(q[1]), 2)],
+                    "length_px": round(length, 2),
+                    "angle_deg": round(angle_deg, 2),
+                    "orientation": orient,
+                    "merged_segments": len(members),
+                    "endpoint_candidates": [candidate for member in members for candidate in member.geometry.get("endpoint_candidates", [])][:6],
+                },
+            ))
+        return merged
 
     @staticmethod
     def _endpoint_candidates(gray: np.ndarray, x1: int, y1: int, x2: int, y2: int, scale: float) -> list[dict]:
