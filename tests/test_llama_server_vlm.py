@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -28,15 +27,17 @@ def test_validate_gguf_pair_enforces_configured_and_hard_limits(tmp_path):
         validate_gguf_pair(model, mmproj, max_bytes=250)
 
 
-def test_build_llama_server_command_contains_mmproj_and_gpu_layers(tmp_path):
+def test_build_llama_server_command_defaults_to_vram_auto_fit(tmp_path):
     command = build_llama_server_command(
         tmp_path / "llama-server.exe",
         tmp_path / "model.gguf",
         tmp_path / "mmproj.gguf",
     )
     assert "--mmproj" in command
-    assert "-ngl" in command
-    assert "99" in command
+    assert "--fit" in command and "on" in command
+    assert "--fit-target" in command and "384" in command
+    assert "-np" in command and "1" in command
+    assert "-ngl" not in command
 
 
 def test_llama_server_observer_posts_openai_compatible_image_message(tmp_path, monkeypatch):
@@ -47,9 +48,12 @@ def test_llama_server_observer_posts_openai_compatible_image_message(tmp_path, m
     mmproj.write_bytes(b"p" * 20)
     image.write_bytes(b"\x89PNG\r\n\x1a\n")
 
-    captured = {}
+    captured = {"requests": []}
 
     class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
         def __enter__(self):
             return self
 
@@ -57,18 +61,21 @@ def test_llama_server_observer_posts_openai_compatible_image_message(tmp_path, m
             return False
 
         def read(self):
-            return json.dumps({"choices": [{"message": {"content": "Likely a connector."}}]}).encode()
+            return json.dumps(self.payload).encode()
 
     def fake_urlopen(request, timeout):
-        captured["request"] = request
-        captured["timeout"] = timeout
-        return FakeResponse()
+        captured["requests"].append(request)
+        if request.full_url.endswith("/props"):
+            return FakeResponse({"modalities": {"vision": True, "audio": False}, "model_path": "mock.gguf", "build_info": "test"})
+        return FakeResponse({"choices": [{"message": {"content": "Likely a connector."}}]})
 
     monkeypatch.setattr(adapter.urllib.request, "urlopen", fake_urlopen)
     observer = LlamaServerVisionObserver(model, mmproj, base_url="http://127.0.0.1:8080/v1")
     result = observer.describe(image, visual_record="line_1 is horizontal", crop_reason="arrow")
 
-    payload = json.loads(captured["request"].data.decode())
+    assert len(captured["requests"]) == 2
+    request = captured["requests"][-1]
+    payload = json.loads(request.data.decode())
     parts = payload["messages"][0]["content"]
     image_part = next(part for part in parts if part["type"] == "image_url")
     assert result["text"] == "Likely a connector."
