@@ -11,13 +11,13 @@ def to_json(scene: VisualScene, indent: int = 2) -> str:
 
 
 def to_llm_context(scene: VisualScene) -> str:
-    """Serialize deterministic observations plus spatial/text structure for a text-only LLM."""
+    """Serialize deterministic observations plus canonical graph and spatial/text structure."""
     img = scene.image
     kinds = Counter(e.kind for e in scene.elements)
     w = float(img.get("width", img.get("width_px", 1)) or 1)
     h = float(img.get("height", img.get("height_px", 1)) or 1)
     lines = [
-        "IMAGE_TO_TIKZ_VISUAL_RECORD v0.9",
+        "IMAGE_TO_TIKZ_VISUAL_RECORD v1.0",
         "STATUS: deterministic computer-vision observations with optional lightweight OCR/VLM augmentation.",
         f"CANVAS: width={int(w)}px height={int(h)}px",
         "COORDINATE_SYSTEM: origin=top-left; x→right; y→down; normalized=(x/width,y/height)",
@@ -35,20 +35,23 @@ def to_llm_context(scene: VisualScene) -> str:
         for item in routing["ranked"][:5]:
             evidence = "; ".join(item.get("evidence", [])) or "no extra evidence"
             detectors = ", ".join(item.get("recommended_detectors", []))
-            lines.append(
-                f"- {item['domain']}: score={float(item['score']):.2f}; evidence={evidence}; "
-                f"recommended_detectors={detectors}"
-            )
+            lines.append(f"- {item['domain']}: score={float(item['score']):.2f}; evidence={evidence}; recommended_detectors={detectors}")
 
     specialized = img.get("specialized_detectors")
     if specialized:
         lines.extend(["", "SPECIALIZED_DETECTORS:"])
-        lines.append(
-            f"- domain={specialized.get('domain')}; method={specialized.get('method')}; "
-            f"detectors={','.join(specialized.get('detectors', []))}"
-        )
+        lines.append(f"- domain={specialized.get('domain')}; method={specialized.get('method')}; detectors={','.join(specialized.get('detectors', []))}")
         for name, count in sorted(specialized.get("evidence_counts", {}).items()):
             lines.append(f"- {name}: {count}")
+
+    graph = img.get("canonical_graph")
+    if graph:
+        lines.extend(["", "CANONICAL_GRAPH:"])
+        lines.append(f"- nodes={graph.get('node_count', 0)}; edges={graph.get('edge_count', 0)}; components={graph.get('component_count', 0)}; method={graph.get('method')}")
+        for component in graph.get("components", [])[:80]:
+            lines.append(f"- {component['id']}: size={component['size']}; nodes={','.join(component['node_ids'])}")
+        for edge in graph.get("edges", [])[:1200]:
+            lines.append(f"- {edge['source']} --{edge['relation']}--> {edge['target']}; confidence={float(edge['confidence']):.2f}")
 
     if scene.semantic_summary:
         lines.extend(["", "SUMMARY:", scene.semantic_summary])
@@ -58,11 +61,7 @@ def to_llm_context(scene: VisualScene) -> str:
         for e in scene.elements:
             b = e.bbox
             nb = (b.x / w, b.y / h, b.width / w, b.height / h)
-            lines.append(
-                f"- {e.id}: kind={e.kind}; center_px=({e.center.x:.2f},{e.center.y:.2f}); "
-                f"bbox_px=({b.x:.2f},{b.y:.2f},{b.width:.2f},{b.height:.2f}); "
-                f"bbox_norm=({nb[0]:.5f},{nb[1]:.5f},{nb[2]:.5f},{nb[3]:.5f}); confidence={e.confidence:.2f}"
-            )
+            lines.append(f"- {e.id}: kind={e.kind}; center_px=({e.center.x:.2f},{e.center.y:.2f}); bbox_px=({b.x:.2f},{b.y:.2f},{b.width:.2f},{b.height:.2f}); bbox_norm=({nb[0]:.5f},{nb[1]:.5f},{nb[2]:.5f},{nb[3]:.5f}); confidence={e.confidence:.2f}")
             if e.geometry:
                 lines.append("  geometry=" + json.dumps(e.geometry, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
             if e.style:
@@ -79,11 +78,7 @@ def to_llm_context(scene: VisualScene) -> str:
             content = t.text if t.text else "[undecoded]"
             role = t.role or "unspecified_text_region"
             language = t.language or "unknown"
-            lines.append(
-                f"- {t.id}: content={content!r}; role={role}; language={language}; "
-                f"bbox_px=({b.x:.2f},{b.y:.2f},{b.width:.2f},{b.height:.2f}); "
-                f"center_px=({b.center.x:.2f},{b.center.y:.2f}); confidence={t.confidence}"
-            )
+            lines.append(f"- {t.id}: content={content!r}; role={role}; language={language}; bbox_px=({b.x:.2f},{b.y:.2f},{b.width:.2f},{b.height:.2f}); center_px=({b.center.x:.2f},{b.center.y:.2f}); confidence={t.confidence}")
 
     if scene.relations:
         lines.extend(["", "RELATIONS:"])
@@ -99,16 +94,14 @@ def to_llm_context(scene: VisualScene) -> str:
     if img.get("micro_vlm_hypotheses"):
         lines.extend(["", "MICRO_VLM_HYPOTHESES:"])
         for item in img["micro_vlm_hypotheses"]:
-            lines.append(
-                f"- crop={item['crop_id']}; bbox_px={item['bbox_px']}; priority={item['priority']:.2f}; "
-                f"reasons={','.join(item['reasons'])}; hypothesis={item['text']!r}"
-            )
+            lines.append(f"- crop={item['crop_id']}; bbox_px={item['bbox_px']}; priority={item['priority']:.2f}; reasons={','.join(item['reasons'])}; hypothesis={item['text']!r}")
 
     lines.extend([
         "",
         "INTERPRETATION_RULES:",
         "- Treat geometry, coordinates, text-region locations, containment and ordering as observations.",
-        "- Treat domain routing, specialized-detector roles, axis, arrowhead, dimension, symmetry, group, formula, OCR labels and VLM descriptions as hypotheses unless supported by measured evidence.",
+        "- Treat canonical graph edges, domain routing, specialized-detector roles, axis, arrowhead, dimension, symmetry, group, formula, OCR labels and VLM descriptions as hypotheses unless supported by measured evidence.",
+        "- Use canonical graph components to reconstruct connected visual subassemblies before deciding semantic roles.",
         "- Reconstruct topology and relative placement before deciding stylistic details.",
         "- Never fabricate unreadable labels. Preserve an undecoded text region when character content is unavailable.",
         "- When evidence conflicts, retain alternatives and lower confidence rather than silently selecting one.",
@@ -185,9 +178,10 @@ def h23(scene: VisualScene) -> float:
 
 def to_compact_prompt(scene: VisualScene) -> str:
     return (
-        "You are given a deterministic visual record with optional lightweight OCR, optional crop-based VLM hypotheses, and domain-routed specialized detector evidence.\n"
+        "You are given a deterministic visual record with optional lightweight OCR, optional crop-based VLM hypotheses, domain-routed specialized detector evidence, and a canonical scene graph.\n"
         "Treat every measurement as evidence and every semantic interpretation as a hypothesis.\n"
         "Use domain routing and specialized detector output only as priors. Do not replace measured geometry.\n"
+        "Use graph components to reconstruct subassemblies and connection topology before semantic labeling.\n"
         "Infer the diagram class and topology first. Then generate compilable TikZ preserving geometry, ordering, containment, connections and text placement.\n\n"
         "<VISUAL_RECORD>\n" + to_llm_context(scene) + "\n</VISUAL_RECORD>"
     )
