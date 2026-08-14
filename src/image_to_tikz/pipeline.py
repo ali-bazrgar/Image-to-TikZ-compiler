@@ -6,7 +6,8 @@ from typing import Any
 
 from .analyzer_api import ImageAnalyzer
 from .curves import enrich_curves
-from .micro_vlm import MicroVLMError, enrich_scene_with_micro_vlm
+from .domain_router import enrich_domain_routing
+from .micro_vlm import enrich_scene_with_micro_vlm
 from .multiscale import MultiscaleAnalyzer
 from .ocr import LightweightOCRError, enrich_scene_with_ocr
 from .scene_grammar import enrich_scene_grammar
@@ -45,6 +46,7 @@ def analyze_image(
             scene.warnings.append(str(exc))
 
     enrich_text_structure(scene)
+    enrich_domain_routing(scene)
     enrich_scene_grammar(scene)
 
     if micro_vlm_dir is not None:
