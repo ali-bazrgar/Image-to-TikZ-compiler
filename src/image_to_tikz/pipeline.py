@@ -11,6 +11,7 @@ from .domain_router import enrich_domain_routing
 from .micro_vlm import enrich_scene_with_micro_vlm
 from .multiscale import MultiscaleAnalyzer
 from .ocr import LightweightOCRError, enrich_scene_with_ocr
+from .provenance import enrich_provenance
 from .scene_grammar import enrich_scene_grammar
 from .serialize import to_llm_context
 from .specialized_detectors import enrich_specialized_detectors
@@ -52,6 +53,7 @@ def analyze_image(
     enrich_specialized_detectors(scene, path)
     enrich_scene_grammar(scene)
     enrich_canonical_graph(scene)
+    enrich_provenance(scene)
 
     if micro_vlm_dir is not None:
         enrich_scene_with_micro_vlm(
@@ -62,6 +64,7 @@ def analyze_image(
             max_crops=micro_vlm_max_crops,
             max_model_bytes=micro_vlm_max_model_bytes,
         )
+        enrich_provenance(scene)
 
     return scene, to_llm_context(scene)
 
