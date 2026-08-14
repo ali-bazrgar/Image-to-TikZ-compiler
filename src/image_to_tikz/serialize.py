@@ -17,11 +17,12 @@ def to_llm_context(scene: VisualScene) -> str:
     w = float(img.get("width", img.get("width_px", 1)) or 1)
     h = float(img.get("height", img.get("height_px", 1)) or 1)
     lines = [
-        "IMAGE_TO_TIKZ_VISUAL_RECORD v0.6",
-        "STATUS: deterministic computer-vision observations; no semantic model was used.",
+        "IMAGE_TO_TIKZ_VISUAL_RECORD v0.7",
+        "STATUS: deterministic computer-vision observations; optional lightweight OCR only; no large semantic model was used.",
         f"CANVAS: width={int(w)}px height={int(h)}px",
         "COORDINATE_SYSTEM: origin=top-left; x→right; y→down; normalized=(x/width,y/height)",
         "OBSERVATION_POLICY: measurements are evidence; semantic labels are hypotheses.",
+        "MODEL_POLICY: any optional model used by this compiler must be below 1GB; downstream LLM is external.",
         "",
         "INVENTORY:",
     ]
@@ -43,6 +44,8 @@ def to_llm_context(scene: VisualScene) -> str:
             )
             if e.geometry:
                 lines.append("  geometry=" + json.dumps(e.geometry, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+            if e.style:
+                lines.append("  style=" + json.dumps(e.style, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
             if e.labels:
                 lines.append(f"  labels={e.labels}")
             if e.text_refs:
@@ -53,9 +56,11 @@ def to_llm_context(scene: VisualScene) -> str:
         for t in scene.texts:
             b = t.bbox
             content = t.text if t.text else "[undecoded]"
-            role = t.language or "unspecified_text_region"
+            role = t.role or "unspecified_text_region"
+            language = t.language or "unknown"
             lines.append(
-                f"- {t.id}: content={content!r}; role={role}; bbox_px=({b.x:.2f},{b.y:.2f},{b.width:.2f},{b.height:.2f}); "
+                f"- {t.id}: content={content!r}; role={role}; language={language}; "
+                f"bbox_px=({b.x:.2f},{b.y:.2f},{b.width:.2f},{b.height:.2f}); "
                 f"center_px=({b.center.x:.2f},{b.center.y:.2f}); confidence={t.confidence}"
             )
 
@@ -117,9 +122,8 @@ def _spatial_narrative(scene: VisualScene) -> list[str]:
                 out.append(f"- {a.id} and {b.id} are approximately parallel and may form a dimension/extension-line pattern.")
             elif relation == "global_reference_line_candidate":
                 out.append(f"- {a.id} is a long reference-line candidate (axis/baseline/dimension/connector are all possible).")
-        elif ta and b:
-            if r.relation == "label_or_annotation_candidate":
-                out.append(f"- {ta.id} is near {b.id} and may label or annotate it; text characters are {('known' if ta.text else 'undecoded')}.")
+        elif ta and b and r.relation == "label_or_annotation_candidate":
+            out.append(f"- {ta.id} is near {b.id} and may label or annotate it; text characters are {('known' if ta.text else 'undecoded')}.")
         elif ta and tb:
             if r.relation == "stacked_text_candidate":
                 out.append(f"- {ta.id} and {tb.id} form a stacked-text candidate, possibly numerator/denominator or vertically arranged labels.")
@@ -152,7 +156,7 @@ def h23(scene: VisualScene) -> float:
 
 def to_compact_prompt(scene: VisualScene) -> str:
     return (
-        "You are given a deterministic visual record produced without any AI model.\n"
+        "You are given a deterministic visual record produced primarily by computer vision, optionally augmented by a lightweight OCR model under 1GB.\n"
         "Treat every measurement as evidence and every semantic interpretation as a hypothesis.\n"
         "Infer the diagram class and topology first. Then generate compilable TikZ preserving geometry, ordering, containment, connections and text placement.\n\n"
         "<VISUAL_RECORD>\n" + to_llm_context(scene) + "\n</VISUAL_RECORD>"
