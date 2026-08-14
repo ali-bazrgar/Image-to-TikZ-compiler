@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import cv2
@@ -97,7 +96,7 @@ def test_ocr_result_normalization_supports_current_and_legacy_shapes():
     assert _normalize_result((legacy, [0.01, 0.02]))[0][1:] == ("label", 0.87)
 
 
-def test_micro_vlm_model_policy_accepts_sub_1gb_and_rejects_over_limit(tmp_path):
+def test_micro_vlm_model_policy_accepts_small_and_rejects_over_3gb(tmp_path):
     good = tmp_path / "good"
     good.mkdir()
     (good / "model.safetensors").write_bytes(b"x" * 1024)
@@ -106,10 +105,10 @@ def test_micro_vlm_model_policy_accepts_sub_1gb_and_rejects_over_limit(tmp_path)
     bad = tmp_path / "bad"
     bad.mkdir()
     with (bad / "model.safetensors").open("wb") as handle:
-        handle.truncate(1_000_000_001)
+        handle.truncate(3_000_000_001)
     try:
         validate_model_directory(bad)
     except MicroVLMError as exc:
         assert "exceeding" in str(exc)
     else:
-        raise AssertionError("The 1GB model-size policy must be enforced")
+        raise AssertionError("The 3GB hard model-size policy must be enforced")
