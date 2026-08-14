@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from typing import Any
 
@@ -16,20 +17,53 @@ class LightweightOCRError(RuntimeError):
 
 
 def _load_engine():
-    """Prefer the current RapidOCR API, then the legacy package."""
-    try:
-        from rapidocr import RapidOCR
-
-        return RapidOCR()
-    except ImportError:
+    """Prefer the current RapidOCR API, then the legacy package, and enforce the model budget."""
+    candidates = ("rapidocr", "rapidocr_onnxruntime")
+    last_error: Exception | None = None
+    for module_name in candidates:
         try:
-            from rapidocr_onnxruntime import RapidOCR
-
-            return RapidOCR()
+            module = importlib.import_module(module_name)
+            engine = module.RapidOCR()
+            _enforce_model_budget(engine, module)
+            return engine
         except ImportError as exc:
-            raise LightweightOCRError(
-                "Lightweight OCR is not installed. Install the optional 'ocr' extra."
-            ) from exc
+            last_error = exc
+    raise LightweightOCRError(
+        "Lightweight OCR is not installed. Install the optional 'ocr' extra."
+    ) from last_error
+
+
+def _enforce_model_budget(engine: Any, module: Any) -> None:
+    roots: list[Path] = []
+    cfg = getattr(engine, "cfg", None)
+    global_cfg = getattr(cfg, "Global", None)
+    model_root = getattr(global_cfg, "model_root_dir", None)
+    if model_root:
+        roots.append(Path(model_root))
+    module_paths = getattr(module, "__path__", None) or []
+    roots.extend(Path(p) for p in module_paths)
+
+    offenders: list[tuple[Path, int]] = []
+    seen: set[Path] = set()
+    for root in roots:
+        if not root.exists() or root in seen:
+            continue
+        seen.add(root)
+        try:
+            for path in root.rglob("*.onnx"):
+                try:
+                    size = path.stat().st_size
+                except OSError:
+                    continue
+                if size > MAX_ALLOWED_MODEL_BYTES:
+                    offenders.append((path, size))
+        except OSError:
+            continue
+    if offenders:
+        details = ", ".join(f"{p} ({s / 1_000_000:.1f} MB)" for p, s in offenders)
+        raise LightweightOCRError(
+            f"OCR model budget exceeded: {details}. This compiler allows models below 1 GB only."
+        )
 
 
 def _quad_to_bbox(box: Any) -> BoundingBox:
@@ -42,11 +76,10 @@ def _quad_to_bbox(box: Any) -> BoundingBox:
 
 
 def _normalize_result(result: Any) -> list[tuple[Any, str, float]]:
-    """Normalize RapidOCR v3 and legacy outputs to (box, text, score)."""
+    """Normalize RapidOCR current and legacy outputs to (box, text, score)."""
     if result is None:
         return []
 
-    # Current RapidOCR result object.
     boxes = getattr(result, "boxes", None)
     txts = getattr(result, "txts", None)
     scores = getattr(result, "scores", None)
@@ -57,7 +90,6 @@ def _normalize_result(result: Any) -> list[tuple[Any, str, float]]:
             if str(text).strip()
         ]
 
-    # Some versions return (result, timing).
     payload = result[0] if isinstance(result, tuple) and len(result) == 2 else result
     if payload is None:
         return []
@@ -102,13 +134,14 @@ def extract_ocr(image: np.ndarray, *, score_threshold: float = 0.35) -> list[Tex
     return texts
 
 
-def enrich_scene_with_ocr(scene: VisualScene, image_path: str | Path, *, score_threshold: float = 0.35) -> VisualScene:
+def enrich_scene_with_ocr(
+    scene: VisualScene, image_path: str | Path, *, score_threshold: float = 0.35
+) -> VisualScene:
     image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
     if image is None:
         raise LightweightOCRError(f"Could not decode image for OCR: {image_path}")
     recognized = extract_ocr(image, score_threshold=score_threshold)
 
-    # Replace only matching undecoded text regions; otherwise append recognized blocks.
     for text in recognized:
         match = _best_text_region(text, scene.texts)
         if match is not None and _iou(text.bbox, match.bbox) >= 0.10:
@@ -120,7 +153,9 @@ def enrich_scene_with_ocr(scene: VisualScene, image_path: str | Path, *, score_t
 
     for text in recognized:
         for element in scene.elements:
-            if _distance_to_box(text.bbox.center.x, text.bbox.center.y, element.bbox) <= max(24.0, element.bbox.width * 0.12, element.bbox.height * 0.12):
+            if _distance_to_box(text.bbox.center.x, text.bbox.center.y, element.bbox) <= max(
+                24.0, element.bbox.width * 0.12, element.bbox.height * 0.12
+            ):
                 if text.id not in element.text_refs:
                     element.text_refs.append(text.id)
                 break
