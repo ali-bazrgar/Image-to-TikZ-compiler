@@ -1,3 +1,3 @@
-"""Image-to-TikZ visual analysis toolkit with a model-free core and optional lightweight observers."""
+"""Image-to-TikZ Studio: model-free visual analysis with optional lightweight observers."""
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
