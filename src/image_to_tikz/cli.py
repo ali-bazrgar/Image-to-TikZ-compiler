@@ -1,52 +1,32 @@
 from __future__ import annotations
 
 import argparse
-import json
-import os
 from pathlib import Path
 
-from .analyzer import ImageAnalyzer
 from .pipeline import analyze_image
-from .serialize import to_compact_prompt, to_json, to_llm_context
+from .serialize import to_compact_prompt, to_json
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Convert a raster diagram into an LLM-readable Visual Intermediate Representation.")
+    parser = argparse.ArgumentParser(
+        description="Convert an image into a deterministic, model-free visual representation for any downstream LLM."
+    )
     parser.add_argument("image", help="Input image path")
     parser.add_argument("-o", "--output", help="Output JSON path; defaults to stdout")
-    parser.add_argument("--context", help="Write the canonical LLM text context to this file")
-    parser.add_argument("--prompt", help="Write a ready-to-use text-only LLM prompt to this file")
-    parser.add_argument("--debug-image", help="Write an annotated PNG showing detected objects, boxes and line endpoints")
-    parser.add_argument("--no-ocr", action="store_true", help="Disable optional Tesseract OCR")
+    parser.add_argument("--context", help="Write the canonical LLM-readable text context")
+    parser.add_argument("--prompt", help="Write a ready-to-use text-only LLM prompt")
+    parser.add_argument("--debug-image", help="Write an annotated PNG showing detected primitives")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
-    parser.add_argument("--vision-url", help="Optional OpenAI-compatible multimodal endpoint, e.g. http://127.0.0.1:8080")
-    parser.add_argument("--vision-model", help="Model name used by the multimodal endpoint")
-    parser.add_argument("--vision-api-key", default=os.getenv("VISION_API_KEY"), help="Optional API key")
-    parser.add_argument("--vision-json", help="Write semantic VLM enrichment to this JSON file")
-    parser.add_argument("--full-pipeline", action="store_true", help="Enable Hough-line and relationship enrichment")
     args = parser.parse_args()
 
-    vision = None
-    if args.vision_url or args.vision_json:
-        if not (args.vision_url and args.vision_model):
-            parser.error("--vision-url and --vision-model are both required when vision enrichment is enabled")
-        from .vision import VisionEnricher
-        vision = VisionEnricher(args.vision_url, args.vision_model, args.vision_api_key).analyze(args.image)
-        target = args.vision_json or "vision-enrichment.json"
-        Path(target).write_text(json.dumps(vision, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    if args.full_pipeline:
-        scene, context = analyze_image(args.image, enable_ocr=not args.no_ocr, vision=vision)
-        payload = json.dumps(scene.to_dict(), ensure_ascii=False, indent=2 if args.pretty else None)
-    else:
-        scene = ImageAnalyzer(enable_ocr=not args.no_ocr).analyze(args.image)
-        payload = to_json(scene, indent=2 if args.pretty else None)
-        context = to_llm_context(scene)
+    scene, context = analyze_image(args.image)
+    payload = to_json(scene, indent=2 if args.pretty else None)
 
     if args.output:
         Path(args.output).write_text(payload, encoding="utf-8")
     else:
         print(payload)
+
     if args.context:
         Path(args.context).write_text(context, encoding="utf-8")
     if args.prompt:
