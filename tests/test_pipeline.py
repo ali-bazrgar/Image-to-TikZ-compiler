@@ -23,8 +23,8 @@ def test_pipeline_extracts_basic_geometry(tmp_path):
     assert scene.image["width"] == 500
     assert scene.image["height"] == 300
     assert scene.elements
-    assert "ELEMENTS:" in context
-    assert "RELATIONS:" in context
+    assert "ELEMENTS" in context
+    assert "GRAPH" in context
 
 
 def test_pipeline_exposes_model_free_structure(tmp_path):
@@ -40,7 +40,7 @@ def test_pipeline_exposes_model_free_structure(tmp_path):
     relation_names = {r.relation for r in scene.relations}
     assert relation_names & {"line_junction_candidate", "line_crossing_candidate"}
     assert "stroke_orientation" in next(e.geometry for e in scene.elements if e.kind == "line_segment")
-    assert "INTERPRETATION_RULES:" in context
+    assert "DOWNSTREAM_TASK" in context
 
 
 def test_pipeline_detects_curved_path(tmp_path):
