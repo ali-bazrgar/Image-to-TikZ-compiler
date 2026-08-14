@@ -97,10 +97,17 @@ def analyze_image(
 
 
 def save_artifacts(scene: Any, context: str, output_dir: str | Path) -> dict[str, str]:
+    """Save lossless machine JSON without pretty-printing huge coordinate arrays."""
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     json_path = out / "scene.json"
     text_path = out / "llm_context.txt"
-    json_path.write_text(json.dumps(scene.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+
+    payload = scene.to_dict()
+    # Compact separators preserve every value while avoiding one JSON array item per line.
+    json_path.write_text(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
     text_path.write_text(context, encoding="utf-8")
     return {"json": str(json_path), "context": str(text_path)}
