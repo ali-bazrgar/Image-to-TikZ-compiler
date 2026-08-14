@@ -6,7 +6,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .vir import BoundingBox, Point, Relation, VisualElement, VisualScene
+from .vir import Relation, VisualScene
 
 
 DOMAIN_DETECTORS = {
@@ -68,28 +68,59 @@ def enrich_specialized_detectors(scene: VisualScene, image_path: str | Path) -> 
 
 def _detect_arrows(scene: VisualScene, gray: np.ndarray) -> int:
     edge = cv2.Canny(cv2.GaussianBlur(gray, (3, 3), 0), 60, 160)
-    lines = cv2.HoughLinesP(edge, 1, np.pi / 180, threshold=max(12, gray.shape[1] // 45), minLineLength=max(10, gray.shape[0] // 35), maxLineGap=max(4, gray.shape[0] // 120))
+    lines = cv2.HoughLinesP(
+        edge, 1, np.pi / 180,
+        threshold=max(12, gray.shape[1] // 45),
+        minLineLength=max(10, gray.shape[0] // 35),
+        maxLineGap=max(4, gray.shape[0] // 120),
+    )
     if lines is None:
         return 0
     arr = np.asarray(lines).reshape(-1, 4)
     candidates = 0
+    elements = [e for e in scene.elements if e.kind == "line_segment"]
     for x1, y1, x2, y2 in arr:
         length = math.hypot(float(x2 - x1), float(y2 - y1))
-        if length < 12:
+        if length < 12 or not elements:
             continue
         for x, y, name in ((int(x1), int(y1), "start"), (int(x2), int(y2), "end")):
-            if _dark_neighbor_density(gray, x, y) > 0.42:
-                candidates += 1
-                scene.relations.append(
-                    Relation(
-                        f"line_candidate_{candidates}",
-                        "arrowhead_candidate",
-                        "image",
-                        0.48,
-                        {"endpoint": name, "x_px": int(x), "y_px": int(y)},
-                    )
+            density = _dark_neighbor_density(gray, x, y)
+            if density <= 0.42:
+                continue
+            nearest = min(elements, key=lambda e: _endpoint_distance(e, x, y))
+            endpoint = _closest_endpoint(nearest, x, y)
+            candidates += 1
+            nearest.geometry.setdefault("arrowhead_candidates", []).append(
+                {"endpoint": endpoint, "x_px": x, "y_px": y, "density": round(density, 3)}
+            )
+            nearest.geometry["arrowhead_candidate"] = True
+            nearest.geometry["arrowhead_evidence"] = max(
+                float(nearest.geometry.get("arrowhead_evidence", 0.0)), min(0.99, density)
+            )
+            scene.relations.append(
+                Relation(
+                    nearest.id,
+                    "arrowhead_candidate",
+                    nearest.id,
+                    min(0.95, max(0.4, density)),
+                    {"endpoint": endpoint, "x_px": x, "y_px": y, "specialized_detector": "arrow_geometry"},
                 )
+            )
     return candidates
+
+
+def _endpoint_distance(element, x: int, y: int) -> float:
+    starts = element.geometry.get("start_px", [element.center.x, element.center.y])
+    ends = element.geometry.get("end_px", [element.center.x, element.center.y])
+    return min(math.hypot(float(starts[0]) - x, float(starts[1]) - y), math.hypot(float(ends[0]) - x, float(ends[1]) - y))
+
+
+def _closest_endpoint(element, x: int, y: int) -> str:
+    starts = element.geometry.get("start_px", [element.center.x, element.center.y])
+    ends = element.geometry.get("end_px", [element.center.x, element.center.y])
+    start_d = math.hypot(float(starts[0]) - x, float(starts[1]) - y)
+    end_d = math.hypot(float(ends[0]) - x, float(ends[1]) - y)
+    return "start" if start_d <= end_d else "end"
 
 
 def _dark_neighbor_density(gray: np.ndarray, x: int, y: int) -> float:
