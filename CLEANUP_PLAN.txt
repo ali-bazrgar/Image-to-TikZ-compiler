@@ -1,1 +1,0 @@
-Final tree cleanup is performed atomically by the next repository commit.
