@@ -10,6 +10,7 @@ from .multiscale import MultiscaleAnalyzer
 from .scene_grammar import enrich_scene_grammar
 from .serialize import to_llm_context
 from .structure import enrich_structure
+from .text_structure import enrich_text_structure
 
 
 def analyze_image(image_path: str | Path, *, multiscale: bool = True) -> tuple[Any, str]:
@@ -18,6 +19,7 @@ def analyze_image(image_path: str | Path, *, multiscale: bool = True) -> tuple[A
     scene = MultiscaleAnalyzer().analyze(path) if multiscale else ImageAnalyzer().analyze(path)
     enrich_curves(scene, path)
     enrich_structure(scene)
+    enrich_text_structure(scene)
     enrich_scene_grammar(scene)
     return scene, to_llm_context(scene)
 
