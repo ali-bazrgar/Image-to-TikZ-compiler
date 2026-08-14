@@ -18,13 +18,10 @@ def main() -> int:
     parser.add_argument("--debug-image", help="Write an annotated PNG showing detected primitives")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
     parser.add_argument("--no-multiscale", action="store_true", help="Disable global+local multi-scale analysis")
-    parser.add_argument(
-        "--ocr",
-        choices=("auto", "on", "off"),
-        default="auto",
-        help="Lightweight RapidOCR: auto=use when installed, on=require it, off=never use it",
-    )
+    parser.add_argument("--ocr", choices=("auto", "on", "off"), default="auto", help="Lightweight RapidOCR mode")
     parser.add_argument("--ocr-score", type=float, default=0.35, help="Minimum OCR confidence")
+    parser.add_argument("--micro-vlm-dir", help="Local directory for an optional sub-1GB SmolVLM-256M-Instruct model")
+    parser.add_argument("--micro-vlm-device", default="auto", choices=("auto", "cpu", "cuda"), help="Device for optional micro-VLM")
     args = parser.parse_args()
 
     scene, context = analyze_image(
@@ -32,6 +29,8 @@ def main() -> int:
         multiscale=not args.no_multiscale,
         ocr=args.ocr,
         ocr_score_threshold=args.ocr_score,
+        micro_vlm_dir=args.micro_vlm_dir,
+        micro_vlm_device=args.micro_vlm_device,
     )
     payload = to_json(scene, indent=2 if args.pretty else None)
 
