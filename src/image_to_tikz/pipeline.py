@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .analyzer_api import ImageAnalyzer
+from .canonical_graph import enrich_canonical_graph
 from .curves import enrich_curves
 from .domain_router import enrich_domain_routing
 from .micro_vlm import enrich_scene_with_micro_vlm
@@ -50,6 +51,7 @@ def analyze_image(
     enrich_domain_routing(scene)
     enrich_specialized_detectors(scene, path)
     enrich_scene_grammar(scene)
+    enrich_canonical_graph(scene)
 
     if micro_vlm_dir is not None:
         enrich_scene_with_micro_vlm(
