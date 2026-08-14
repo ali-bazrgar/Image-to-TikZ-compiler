@@ -52,6 +52,23 @@ def _data_uri(path: str | Path) -> str:
     return f"data:{mime};base64,{encoded}"
 
 
+def _get_json(url: str, *, timeout: float) -> dict[str, Any]:
+    request = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise LlamaServerVLMError(f"llama.cpp returned HTTP {exc.code} for {url}: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise LlamaServerVLMError(f"Could not reach llama.cpp server at {url}: {exc}") from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise LlamaServerVLMError(f"Invalid response from llama.cpp server at {url}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise LlamaServerVLMError(f"Unexpected JSON response from {url}: {payload!r}")
+    return payload
+
+
 class LlamaServerVisionObserver:
     """Semantic observer for a running llama.cpp multimodal OpenAI-compatible server."""
 
@@ -72,6 +89,21 @@ class LlamaServerVisionObserver:
         self.timeout = timeout
         self.max_new_tokens = max_new_tokens
 
+    def check_server(self) -> dict[str, Any]:
+        """Read llama.cpp /props and fail early when multimodal support is unavailable."""
+        props = _get_json(f"{self.base_url.removesuffix('/v1')}/props", timeout=min(self.timeout, 10.0))
+        modalities = props.get("modalities") or {}
+        vision = bool(modalities.get("vision"))
+        if not vision:
+            model_path = props.get("model_path", "unknown")
+            build_info = props.get("build_info", "unknown")
+            raise LlamaServerVLMError(
+                "llama.cpp server is reachable but vision is disabled. "
+                f"/props reports modalities.vision=false; model={model_path}; build={build_info}. "
+                "Start a current multimodal llama-server with --mmproj <matching-mmproj.gguf>."
+            )
+        return props
+
     def describe(
         self,
         image_path: str | Path,
@@ -79,6 +111,7 @@ class LlamaServerVisionObserver:
         visual_record: str = "",
         crop_reason: str = "whole_image",
     ) -> dict[str, Any]:
+        self.check_server()
         prompt = (
             "Analyze this scientific or technical diagram region. Give a concise semantic hypothesis "
             "about what it shows, visible symbols, labels, local relationships, and likely role in the "
@@ -104,12 +137,17 @@ class LlamaServerVisionObserver:
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",
             data=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
             method="POST",
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise LlamaServerVLMError(
+                f"llama.cpp vision request failed with HTTP {exc.code}: {detail}"
+            ) from exc
         except urllib.error.URLError as exc:
             raise LlamaServerVLMError(
                 f"Could not reach llama.cpp vision server at {self.base_url}: {exc}"
@@ -148,6 +186,7 @@ def enrich_scene_with_llama_server_vlm(
         model_name=model_name,
         max_model_bytes=max_model_bytes,
     )
+    observer.check_server()
     crops = select_semantic_crops(scene, image_path, max_crops=max_crops)
     if not crops:
         scene.warnings.append("LLAMA_SERVER_VLM skipped: no high-value semantic crops were selected.")
@@ -205,9 +244,10 @@ def build_llama_server_command(
     port: int = 8080,
     context: int = 4096,
     gpu_layers: int = 99,
+    no_mmproj_offload: bool = False,
 ) -> list[str]:
     """Build a conservative llama.cpp server command for SmolVLM2 GGUF."""
-    return [
+    command = [
         str(server_executable),
         "-m",
         str(model_path),
@@ -222,3 +262,6 @@ def build_llama_server_command(
         "-ngl",
         str(gpu_layers),
     ]
+    if no_mmproj_offload:
+        command.append("--no-mmproj-offload")
+    return command
