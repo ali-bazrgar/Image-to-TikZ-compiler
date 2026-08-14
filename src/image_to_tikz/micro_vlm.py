@@ -97,7 +97,7 @@ def enrich_scene_with_micro_vlm(scene: Any, image_path: str | Path, model_dir: s
     from .semantic_crops import crop_image, select_semantic_crops
     from .serialize import to_llm_context
 
-    observer = SmolVLMSemanticObserver(model_dir, device=device, max_crops=max_crops if False else 180, max_model_bytes=max_model_bytes)
+    observer = SmolVLMSemanticObserver(model_dir, device=device, max_model_bytes=max_model_bytes)
     crops = select_semantic_crops(scene, image_path, max_crops=max_crops)
     if not crops:
         scene.warnings.append("MICRO_VLM skipped: no high-value semantic crops were selected.")
