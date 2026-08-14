@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 
+import image_to_tikz.pipeline as pipeline_module
 from image_to_tikz.ocr import LightweightOCRError, _normalize_result
 from image_to_tikz.pipeline import analyze_image
 
@@ -57,14 +58,38 @@ def test_pipeline_detects_curved_path(tmp_path):
     assert "curve" in context.lower() or "polyline" in context.lower()
 
 
-def test_ocr_auto_does_not_require_optional_dependency(tmp_path):
+def test_ocr_auto_falls_back_cleanly_when_optional_engine_is_missing(tmp_path, monkeypatch):
     image = np.full((120, 240, 3), 255, dtype=np.uint8)
     cv2.putText(image, "A1", (30, 75), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 0), 2)
     path = tmp_path / "text.png"
     assert cv2.imwrite(str(path), image)
 
+    def missing_engine(*args, **kwargs):
+        raise LightweightOCRError("test: optional OCR unavailable")
+
+    monkeypatch.setattr(pipeline_module, "enrich_scene_with_ocr", missing_engine)
     scene, _ = analyze_image(path, multiscale=False, ocr="auto")
-    assert "ocr" in scene.image
+    assert scene.image["ocr"]["enabled"] is False
+    assert any("optional OCR unavailable" in warning for warning in scene.warnings)
+
+
+def test_ocr_on_requires_optional_engine(tmp_path, monkeypatch):
+    image = np.full((120, 240, 3), 255, dtype=np.uint8)
+    path = tmp_path / "text.png"
+    assert cv2.imwrite(str(path), image)
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "enrich_scene_with_ocr",
+        lambda *args, **kwargs: (_ for _ in ()).throw(LightweightOCRError("missing")),
+    )
+
+    try:
+        analyze_image(path, multiscale=False, ocr="on")
+    except LightweightOCRError as exc:
+        assert str(exc) == "missing"
+    else:
+        raise AssertionError("ocr='on' must fail when the optional engine is unavailable")
 
 
 def test_ocr_result_normalization_supports_current_and_legacy_shapes():
