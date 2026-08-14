@@ -60,14 +60,14 @@ class VisionEnricher:
         response = requests.post(self.base_url + "/v1/chat/completions", json=payload, headers=headers, timeout=self.timeout)
         response.raise_for_status()
         data = response.json()
-        content = data["choices"][0]["message"]["content"]
+        content = data["choices"]["message"]["content"] if isinstance(data["choices"], dict) else data["choices"][0]["message"]["content"]
         return _parse_json(content)
 
 
 def _parse_json(text: str) -> dict[str, Any]:
     text = text.strip()
     if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\\s*|\\s*```$", "", text, flags=re.I | re.S).strip()
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I | re.S).strip()
     start, end = text.find("{"), text.rfind("}")
     if start >= 0 and end > start:
         text = text[start:end + 1]
