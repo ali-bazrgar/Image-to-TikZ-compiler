@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from typing import Iterable
 
-from .vir import BoundingBox, Relation, TextBlock, VisualScene
+from .vir import Relation, TextBlock, VisualScene
 
 
 def enrich_text_structure(scene: VisualScene) -> VisualScene:
-    """Extract deterministic typography-like structure without OCR."""
+    """Extract deterministic typography-like structure without requiring OCR."""
     _classify_regions(scene)
     _group_glyphs_into_runs(scene)
     _detect_baselines(scene)
@@ -18,19 +17,20 @@ def enrich_text_structure(scene: VisualScene) -> VisualScene:
 
 
 def _classify_regions(scene: VisualScene) -> None:
+    height = float(scene.image.get("height", 1) or 1)
+    area_total = float(scene.image.get("width", 1) or 1) * height
     for t in scene.texts:
         w, h = max(t.bbox.width, 1.0), max(t.bbox.height, 1.0)
         aspect = w / h
-        area_ratio = (w * h) / max(scene.image.get("width", 1) * scene.image.get("height", 1), 1)
-        if aspect > 5 and h < 0.08 * scene.image.get("height", 1):
-            role = "text_line_candidate"
+        area_ratio = (w * h) / max(area_total, 1.0)
+        if aspect > 5 and h < 0.08 * height:
+            t.role = "text_line_candidate"
         elif aspect < 0.45 and h > 12:
-            role = "vertical_label_candidate"
-        elif area_ratio < 0.0008 and h < 0.05 * scene.image.get("height", 1):
-            role = "small_label_or_symbol_candidate"
+            t.role = "vertical_label_candidate"
+        elif area_ratio < 0.0008 and h < 0.05 * height:
+            t.role = "small_label_or_symbol_candidate"
         else:
-            role = "text_region_candidate"
-        t.language = role
+            t.role = "text_region_candidate"
 
 
 def _group_glyphs_into_runs(scene: VisualScene) -> None:
@@ -54,7 +54,7 @@ def _group_glyphs_into_runs(scene: VisualScene) -> None:
             band.sort(key=lambda x: x.bbox.x)
             ids = [x.id for x in band]
             for a in band:
-                a.language = f"glyph_run_candidate:{','.join(ids)}"
+                a.role = f"glyph_run_candidate:{','.join(ids)}"
 
 
 def _detect_baselines(scene: VisualScene) -> None:
@@ -65,18 +65,16 @@ def _detect_baselines(scene: VisualScene) -> None:
     for members in rows.values():
         if len(members) < 2:
             continue
-        centers = [m.bbox.center.y for m in members]
-        baseline = sum(centers) / len(centers)
+        baseline = sum(m.bbox.center.y for m in members) / len(members)
         for m in members:
-            m.language = f"{m.language or 'text_region_candidate'};baseline_y≈{baseline:.1f}"
+            base = m.role or "text_region_candidate"
+            m.role = f"{base};baseline_y≈{baseline:.1f}"
 
 
 def _detect_formula_like_layouts(scene: VisualScene) -> None:
     texts = scene.texts
-    for a in texts:
-        for b in texts:
-            if a.id >= b.id:
-                continue
+    for i, a in enumerate(texts):
+        for b in texts[i + 1 :]:
             dx = abs(a.bbox.center.x - b.bbox.center.x)
             dy = abs(a.bbox.center.y - b.bbox.center.y)
             if dx < max(a.bbox.width, b.bbox.width) * 0.65 and dy > max(a.bbox.height, b.bbox.height) * 0.55:
@@ -87,7 +85,6 @@ def _detect_formula_like_layouts(scene: VisualScene) -> None:
 
 def _attach_text_relations(scene: VisualScene) -> None:
     for t in scene.texts:
-        # Find nearest non-text primitive and emit a conservative label relation.
         candidates = []
         for e in scene.elements:
             dx = max(e.bbox.x - t.bbox.center.x, 0, t.bbox.center.x - (e.bbox.x + e.bbox.width))
@@ -98,4 +95,12 @@ def _attach_text_relations(scene: VisualScene) -> None:
             d, e = min(candidates, key=lambda x: x[0])
             threshold = max(24.0, 1.5 * max(t.bbox.width, t.bbox.height, e.bbox.width * 0.1, e.bbox.height * 0.1))
             if d <= threshold:
-                scene.relations.append(Relation(t.id, "label_or_annotation_candidate", e.id, round(max(0.35, 1 - d / threshold), 3), {"distance_px": round(d, 2)}))
+                scene.relations.append(
+                    Relation(
+                        t.id,
+                        "label_or_annotation_candidate",
+                        e.id,
+                        round(max(0.35, 1 - d / threshold), 3),
+                        {"distance_px": round(d, 2)},
+                    )
+                )
