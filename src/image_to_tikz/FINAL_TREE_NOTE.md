@@ -1,1 +1,0 @@
-The public analyzer entry point is replaced atomically with the deterministic implementation in analyzer_model_free.py. The core runtime does not require an AI model.
