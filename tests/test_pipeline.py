@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import cv2
@@ -8,7 +9,7 @@ import numpy as np
 import image_to_tikz.pipeline as pipeline_module
 from image_to_tikz.micro_vlm import MicroVLMError, validate_model_directory
 from image_to_tikz.ocr import LightweightOCRError, _normalize_result
-from image_to_tikz.pipeline import analyze_image
+from image_to_tikz.pipeline import analyze_image, save_artifacts
 
 
 def test_pipeline_extracts_basic_geometry(tmp_path):
@@ -54,6 +55,20 @@ def test_pipeline_detects_curved_path(tmp_path):
     curve_kinds = {"curve_path", "polyline_or_arc"}
     assert any(e.kind in curve_kinds for e in scene.elements)
     assert "curve" in context.lower() or "polyline" in context.lower()
+
+
+def test_save_artifacts_keeps_full_fidelity_but_compact_json(tmp_path):
+    image = np.full((120, 220, 3), 255, dtype=np.uint8)
+    cv2.line(image, (20, 60), (200, 60), (0, 0, 0), 2)
+    path = tmp_path / "compact_json.png"
+    assert cv2.imwrite(str(path), image)
+    scene, context = analyze_image(path, multiscale=False, ocr="off")
+
+    artifacts = save_artifacts(scene, context, tmp_path / "out")
+    json_text = (tmp_path / "out" / "scene.json").read_text(encoding="utf-8")
+    assert json.loads(json_text)["schema"] == scene.schema
+    assert json_text.count("\n") <= 1
+    assert "analysis_scale" in json_text
 
 
 def test_ocr_auto_falls_back_cleanly_when_optional_engine_is_missing(tmp_path, monkeypatch):
