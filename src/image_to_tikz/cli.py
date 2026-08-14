@@ -15,6 +15,7 @@ def main() -> int:
     parser.add_argument("-o", "--output", help="Output JSON path; defaults to stdout")
     parser.add_argument("--context", help="Write the canonical LLM text context to this file")
     parser.add_argument("--prompt", help="Write a ready-to-use text-only LLM prompt to this file")
+    parser.add_argument("--debug-image", help="Write an annotated PNG showing detected objects, boxes and line endpoints")
     parser.add_argument("--no-ocr", action="store_true", help="Disable optional Tesseract OCR")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
     parser.add_argument("--vision-url", help="Optional OpenAI-compatible multimodal endpoint, e.g. http://127.0.0.1:8080")
@@ -33,6 +34,9 @@ def main() -> int:
         Path(args.context).write_text(to_llm_context(scene), encoding="utf-8")
     if args.prompt:
         Path(args.prompt).write_text(to_compact_prompt(scene), encoding="utf-8")
+    if args.debug_image:
+        from .render import render_debug
+        render_debug(args.image, scene, args.debug_image)
 
     if args.vision_url or args.vision_json:
         if not (args.vision_url and args.vision_model):
