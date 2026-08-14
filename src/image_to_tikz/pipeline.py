@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .analyzer_api import ImageAnalyzer
+from .curves import enrich_curves
 from .multiscale import MultiscaleAnalyzer
 from .scene_grammar import enrich_scene_grammar
 from .serialize import to_llm_context
@@ -13,7 +14,9 @@ from .structure import enrich_structure
 
 def analyze_image(image_path: str | Path, *, multiscale: bool = True) -> tuple[Any, str]:
     """Run the deterministic model-free image-analysis pipeline."""
-    scene = MultiscaleAnalyzer().analyze(str(image_path)) if multiscale else ImageAnalyzer().analyze(str(image_path))
+    path = str(image_path)
+    scene = MultiscaleAnalyzer().analyze(path) if multiscale else ImageAnalyzer().analyze(path)
+    enrich_curves(scene, path)
     enrich_structure(scene)
     enrich_scene_grammar(scene)
     return scene, to_llm_context(scene)
