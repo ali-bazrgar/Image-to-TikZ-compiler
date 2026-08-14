@@ -20,10 +20,15 @@ def main() -> int:
     parser.add_argument("--no-multiscale", action="store_true", help="Disable global+local multi-scale analysis")
     parser.add_argument("--ocr", choices=("auto", "on", "off"), default="auto", help="Lightweight RapidOCR mode")
     parser.add_argument("--ocr-score", type=float, default=0.35, help="Minimum OCR confidence")
-    parser.add_argument("--micro-vlm-dir", help="Local directory for an optional VLM model; model weights must fit the configured GPU budget")
-    parser.add_argument("--micro-vlm-device", default="auto", choices=("auto", "cpu", "cuda"), help="Device for optional micro-VLM")
+    parser.add_argument("--micro-vlm-backend", choices=("none", "transformers", "llama-server"), default="none", help="Optional semantic observer backend")
+    parser.add_argument("--micro-vlm-dir", help="Local Transformers model directory")
+    parser.add_argument("--micro-vlm-model-path", help="Local GGUF language-model file for llama.cpp")
+    parser.add_argument("--micro-vlm-mmproj-path", help="Local GGUF multimodal projector for llama.cpp")
+    parser.add_argument("--micro-vlm-base-url", default="http://127.0.0.1:8080/v1", help="llama.cpp OpenAI-compatible base URL")
+    parser.add_argument("--micro-vlm-model-name", default="SmolVLM2-2.2B-Instruct", help="Model name sent to the llama.cpp server")
+    parser.add_argument("--micro-vlm-device", default="auto", choices=("auto", "cpu", "cuda"), help="Device for optional Transformers VLM")
     parser.add_argument("--micro-vlm-max-crops", type=int, default=8, help="Maximum high-value crops inspected by the optional VLM")
-    parser.add_argument("--micro-vlm-max-model-gb", type=float, default=2.5, help="Maximum model weight size in GB; hard ceiling is 3.0 GB")
+    parser.add_argument("--micro-vlm-max-model-gb", type=float, default=2.5, help="Maximum combined model-weight size in GB; hard ceiling is 3.0 GB")
     args = parser.parse_args()
 
     scene, context = analyze_image(
@@ -31,8 +36,13 @@ def main() -> int:
         multiscale=not args.no_multiscale,
         ocr=args.ocr,
         ocr_score_threshold=args.ocr_score,
+        micro_vlm_backend=args.micro_vlm_backend,
         micro_vlm_dir=args.micro_vlm_dir,
         micro_vlm_device=args.micro_vlm_device,
+        micro_vlm_model_path=args.micro_vlm_model_path,
+        micro_vlm_mmproj_path=args.micro_vlm_mmproj_path,
+        micro_vlm_base_url=args.micro_vlm_base_url,
+        micro_vlm_model_name=args.micro_vlm_model_name,
         micro_vlm_max_crops=args.micro_vlm_max_crops,
         micro_vlm_max_model_bytes=int(args.micro_vlm_max_model_gb * 1_000_000_000),
     )
