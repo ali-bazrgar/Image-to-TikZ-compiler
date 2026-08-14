@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "image-to-tikz-compiler"
-version = "0.1.0"
-description = "Image analysis pipeline that converts raster diagrams into an LLM-readable visual intermediate representation (VIR)."
+version = "0.2.0"
+description = "Model-agnostic image understanding pipeline that converts raster diagrams into an LLM-readable visual intermediate representation (VIR)."
 requires-python = ">=3.10"
 dependencies = [
   "opencv-python>=4.9",
@@ -16,7 +16,8 @@ dependencies = [
 [project.optional-dependencies]
 ocr = ["pytesseract>=0.3.13"]
 llm = ["requests>=2.32"]
-all = ["pytesseract>=0.3.13", "requests>=2.32"]
+test = ["pytest>=8.0"]
+all = ["pytesseract>=0.3.13", "requests>=2.32", "pytest>=8.0"]
 
 [project.scripts]
 image-to-vir = "image_to_tikz.cli:main"
