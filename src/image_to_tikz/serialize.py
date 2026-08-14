@@ -17,17 +17,28 @@ def to_llm_context(scene: VisualScene) -> str:
     w = float(img.get("width", img.get("width_px", 1)) or 1)
     h = float(img.get("height", img.get("height_px", 1)) or 1)
     lines = [
-        "IMAGE_TO_TIKZ_VISUAL_RECORD v0.7",
-        "STATUS: deterministic computer-vision observations; optional lightweight OCR only; no large semantic model was used.",
+        "IMAGE_TO_TIKZ_VISUAL_RECORD v0.8",
+        "STATUS: deterministic computer-vision observations with optional lightweight OCR/VLM augmentation.",
         f"CANVAS: width={int(w)}px height={int(h)}px",
         "COORDINATE_SYSTEM: origin=top-left; x→right; y→down; normalized=(x/width,y/height)",
         "OBSERVATION_POLICY: measurements are evidence; semantic labels are hypotheses.",
-        "MODEL_POLICY: any optional model used by this compiler must be below 1GB; downstream LLM is external.",
+        "MODEL_POLICY: the image-analysis core is model-free; optional local observers are GPU-budgeted; downstream LLM is external.",
         "",
         "INVENTORY:",
     ]
     for kind, count in sorted(kinds.items()):
         lines.append(f"- {kind}: {count}")
+
+    routing = img.get("domain_routing")
+    if routing and routing.get("ranked"):
+        lines.extend(["", "DOMAIN_ROUTING:"])
+        for item in routing["ranked"][:5]:
+            evidence = "; ".join(item.get("evidence", [])) or "no extra evidence"
+            detectors = ", ".join(item.get("recommended_detectors", []))
+            lines.append(
+                f"- {item['domain']}: score={float(item['score']):.2f}; evidence={evidence}; "
+                f"recommended_detectors={detectors}"
+            )
 
     if scene.semantic_summary:
         lines.extend(["", "SUMMARY:", scene.semantic_summary])
@@ -75,17 +86,25 @@ def to_llm_context(scene: VisualScene) -> str:
         lines.extend(["", "SPATIAL_NARRATIVE:"])
         lines.extend(narrative)
 
+    if img.get("micro_vlm_hypotheses"):
+        lines.extend(["", "MICRO_VLM_HYPOTHESES:"])
+        for item in img["micro_vlm_hypotheses"]:
+            lines.append(
+                f"- crop={item['crop_id']}; bbox_px={item['bbox_px']}; priority={item['priority']:.2f}; "
+                f"reasons={','.join(item['reasons'])}; hypothesis={item['text']!r}"
+            )
+
     lines.extend([
         "",
         "INTERPRETATION_RULES:",
         "- Treat geometry, coordinates, text-region locations, containment and ordering as observations.",
-        "- Treat axis, arrowhead, dimension, symmetry, group, formula and text-role labels as hypotheses unless supported by multiple observations.",
+        "- Treat domain routing, axis, arrowhead, dimension, symmetry, group, formula, OCR labels and VLM descriptions as hypotheses unless supported by measured evidence.",
         "- Reconstruct topology and relative placement before deciding stylistic details.",
         "- Never fabricate unreadable labels. Preserve an undecoded text region when character content is unavailable.",
         "- When evidence conflicts, retain alternatives and lower confidence rather than silently selecting one.",
         "",
         "DOWNSTREAM_LLM_TASK:",
-        "First infer the most plausible diagram class and scene structure from the record. Then generate TikZ that preserves measured topology, geometry, repetition, containment, text placement and spatial ordering."
+        "First infer the most plausible diagram class and scene structure from the evidence. Then generate compilable TikZ that preserves measured topology, geometry, repetition, containment, text placement and spatial ordering."
     ])
     if scene.warnings:
         lines.extend(["", "WARNINGS:"])
@@ -156,8 +175,9 @@ def h23(scene: VisualScene) -> float:
 
 def to_compact_prompt(scene: VisualScene) -> str:
     return (
-        "You are given a deterministic visual record produced primarily by computer vision, optionally augmented by a lightweight OCR model under 1GB.\n"
+        "You are given a deterministic visual record with optional lightweight OCR and optional crop-based VLM hypotheses.\n"
         "Treat every measurement as evidence and every semantic interpretation as a hypothesis.\n"
+        "Use domain routing only as a prior for interpreting the evidence. Do not replace measured geometry.\n"
         "Infer the diagram class and topology first. Then generate compilable TikZ preserving geometry, ordering, containment, connections and text placement.\n\n"
         "<VISUAL_RECORD>\n" + to_llm_context(scene) + "\n</VISUAL_RECORD>"
     )
