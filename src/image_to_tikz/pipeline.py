@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .analyzer import ImageAnalyzer
+from .analyzer_api import ImageAnalyzer
 from .graph import enrich_scene
 from .semantic import render_llm_context
 
