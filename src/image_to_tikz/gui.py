@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .golden_prompt import build_golden_prompt
 from .llama_semantic import enrich_scene_with_llama_server_vlm
+from .llama_server_vlm import LlamaServerVLMError, LlamaServerVisionObserver, build_llama_server_command
 from .llm_client import chat_completion
 from .pipeline import analyze_image
 from .tikz_verifier import compile_and_compare
@@ -64,9 +65,10 @@ def run() -> int:
             self.smol_top_p = QDoubleSpinBox(); self.smol_top_p.setRange(0.01, 1.0); self.smol_top_p.setSingleStep(0.01); self.smol_top_p.setValue(0.9)
             self.ocr = QCheckBox("Enable lightweight OCR")
             self.multiscale = QCheckBox("Multiscale CV analysis"); self.multiscale.setChecked(True)
+            self.no_mmproj_offload = QCheckBox("Keep mmproj on CPU (useful if VRAM is tight)")
             form.addRow("llama port", self.port); form.addRow("context", self.ctx); form.addRow("GPU layers", self.ngl)
             form.addRow("Semantic crops", self.crops); form.addRow("Smol temperature", self.smol_temp); form.addRow("Smol top-p", self.smol_top_p)
-            form.addRow(self.ocr); form.addRow(self.multiscale)
+            form.addRow(self.no_mmproj_offload); form.addRow(self.ocr); form.addRow(self.multiscale)
             outer.addWidget(vision)
 
             llm = QGroupBox("3. Commercial LLM (OpenAI-compatible)")
@@ -78,8 +80,9 @@ def run() -> int:
 
             buttons = QHBoxLayout()
             for text, slot in [
-                ("Start llama.cpp", self.start_server), ("Stop", self.stop_server), ("Analyze + Smol", self.analyze),
-                ("Send to LLM", self.send_to_llm), ("Copy Prompt", self.copy_prompt), ("Verify TikZ", self.verify), ("Save settings", self.save),
+                ("Start llama.cpp", self.start_server), ("Check Vision", self.check_vision), ("Stop", self.stop_server),
+                ("Analyze + Smol", self.analyze), ("Send to LLM", self.send_to_llm), ("Copy Prompt", self.copy_prompt),
+                ("Verify TikZ", self.verify), ("Save settings", self.save),
             ]:
                 b = QPushButton(text); b.clicked.connect(slot); buttons.addWidget(b)
             outer.addLayout(buttons)
@@ -120,7 +123,12 @@ def run() -> int:
             if not all((exe, model, mm)):
                 QMessageBox.warning(self, APP_NAME, "Select llama-server.exe, SmolVLM2 GGUF and mmproj GGUF first."); return
             if self.server.state() != QProcess.NotRunning: return
-            args = ["-m", model, "--mmproj", mm, "--host", "127.0.0.1", "--port", str(self.port.value()), "-c", str(self.ctx.value()), "-ngl", str(self.ngl.value()), "--temp", str(self.smol_temp.value()), "--top-p", str(self.smol_top_p.value())]
+            args = build_llama_server_command(
+                exe, model, mm,
+                host="127.0.0.1", port=self.port.value(), context=self.ctx.value(), gpu_layers=self.ngl.value(),
+                no_mmproj_offload=self.no_mmproj_offload.isChecked(),
+            )
+            args += ["--temp", str(self.smol_temp.value()), "--top-p", str(self.smol_top_p.value())]
             self.log_box.appendPlainText("START: " + " ".join([exe, *args])); self.server.start(exe, args)
 
         def stop_server(self):
@@ -130,6 +138,24 @@ def run() -> int:
 
         def _server_url(self) -> str:
             return f"http://127.0.0.1:{self.port.value()}/v1"
+
+        def check_vision(self):
+            try:
+                if self.server.state() == QProcess.NotRunning:
+                    raise LlamaServerVLMError("llama-server is not running. Click 'Start llama.cpp' first.")
+                observer = LlamaServerVisionObserver(
+                    self.model.text().strip(), self.mmproj.text().strip(),
+                    base_url=self._server_url(), max_model_bytes=2_500_000_000,
+                )
+                props = observer.check_server()
+                self.log_box.appendPlainText(
+                    "VISION OK: modalities=" + json.dumps(props.get("modalities", {}), ensure_ascii=False)
+                    + "; build=" + str(props.get("build_info", "unknown"))
+                )
+                QMessageBox.information(self, APP_NAME, "Vision is enabled on the llama.cpp server.")
+            except Exception as exc:
+                self.log_box.appendPlainText("VISION CHECK FAILED: " + str(exc))
+                QMessageBox.critical(self, APP_NAME, str(exc))
 
         def analyze(self):
             image = self.image.text().strip()
@@ -188,7 +214,8 @@ def run() -> int:
                 "image": self.image.text(), "server_exe": self.server_exe.text(), "model": self.model.text(), "mmproj": self.mmproj.text(),
                 "output_dir": self.output_dir.text(), "pdflatex": self.pdflatex.text(), "pdftoppm": self.pdftoppm.text(),
                 "port": self.port.value(), "ctx": self.ctx.value(), "ngl": self.ngl.value(), "crops": self.crops.value(),
-                "smol_temp": self.smol_temp.value(), "smol_top_p": self.smol_top_p.value(), "ocr": self.ocr.isChecked(), "multiscale": self.multiscale.isChecked(),
+                "smol_temp": self.smol_temp.value(), "smol_top_p": self.smol_top_p.value(), "no_mmproj_offload": self.no_mmproj_offload.isChecked(),
+                "ocr": self.ocr.isChecked(), "multiscale": self.multiscale.isChecked(),
                 "llm_endpoint": self.llm_endpoint.text(), "llm_model": self.llm_model.text(),
             }
             CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True); CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -204,6 +231,7 @@ def run() -> int:
                     if name in d: getattr(self, name).setValue(int(d[name]))
                 for name in ("smol_temp", "smol_top_p"):
                     if name in d: getattr(self, name).setValue(float(d[name]))
+                self.no_mmproj_offload.setChecked(bool(d.get("no_mmproj_offload", False)))
                 self.ocr.setChecked(bool(d.get("ocr", False))); self.multiscale.setChecked(bool(d.get("multiscale", True)))
             except Exception as exc: self.log_box.appendPlainText(f"SETTINGS LOAD ERROR: {exc}")
 
