@@ -65,16 +65,16 @@ def test_llama_server_observer_posts_openai_compatible_image_message(tmp_path, m
 
     def fake_urlopen(request, timeout):
         captured["requests"].append(request)
-        if request.full_url.endswith("/props"):
-            return FakeResponse({"modalities": {"vision": True, "audio": False}, "model_path": "mock.gguf", "build_info": "test"})
         return FakeResponse({"choices": [{"message": {"content": "Likely a connector."}}]})
 
     monkeypatch.setattr(adapter.urllib.request, "urlopen", fake_urlopen)
     observer = LlamaServerVisionObserver(model, mmproj, base_url="http://127.0.0.1:8080/v1")
+    # describe() is intentionally a single inference request; health-checking belongs
+    # to the caller so multiple semantic crops do not re-query /props.
     result = observer.describe(image, visual_record="line_1 is horizontal", crop_reason="arrow")
 
-    assert len(captured["requests"]) == 2
-    request = captured["requests"][-1]
+    assert len(captured["requests"]) == 1
+    request = captured["requests"][0]
     payload = json.loads(request.data.decode())
     parts = payload["messages"][0]["content"]
     image_part = next(part for part in parts if part["type"] == "image_url")
