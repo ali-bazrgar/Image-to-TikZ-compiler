@@ -123,6 +123,7 @@ def enrich_scene_with_llama_server_vlm(scene: Any, image_path: str | Path, model
 
 
 def build_llama_server_command(server_executable: str | Path, model_path: str | Path, mmproj_path: str | Path, *, host: str = "127.0.0.1", port: int = 8080, context: int = 4096, gpu_layers: int = 99, no_mmproj_offload: bool = False) -> list[str]:
-    command = [str(server_executable), "-m", str(model_path), "--mmproj", str(mmproj_path), "--host", host, "--port", str(port), "-c", str(context), "-ngl", str(gpu_layers)]
+    """Return QProcess arguments; the executable itself is passed separately to QProcess.start()."""
+    command = ["-m", str(model_path), "--mmproj", str(mmproj_path), "--host", host, "--port", str(port), "-c", str(context), "-ngl", str(gpu_layers)]
     if no_mmproj_offload: command.append("--no-mmproj-offload")
     return command
