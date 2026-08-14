@@ -11,7 +11,11 @@ image
   ↓
 normalization / denoising
   ↓
-OpenCV geometry extraction
+global OpenCV geometry extraction
+  ↓
+overlapping local-window analysis
+  ↓
+fusion / duplicate suppression
   ↓
 shapes + line segments + endpoints
   ↓
@@ -60,6 +64,8 @@ The model-free analyzer currently extracts:
 - approximate horizontal/vertical mirror symmetry
 - stroke orientation and normalized length features
 - normalized coordinates and confidence values
+
+The default pipeline is now multiscale. Large images are analyzed globally and through overlapping local windows so small primitives have a better chance of being detected. Local detections are translated back to global coordinates and fused with deterministic duplicate suppression.
 
 The core deliberately does **not** claim that a measured primitive has a domain-specific meaning. For example, a long horizontal line may be an axis, baseline, dimension line, or ordinary connector. The downstream LLM receives the evidence and decides among hypotheses.
 
