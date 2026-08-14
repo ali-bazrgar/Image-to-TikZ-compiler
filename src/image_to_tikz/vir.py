@@ -29,6 +29,7 @@ class TextBlock:
     bbox: BoundingBox
     confidence: float | None = None
     language: str | None = None
+    role: str | None = None
 
 
 @dataclass
