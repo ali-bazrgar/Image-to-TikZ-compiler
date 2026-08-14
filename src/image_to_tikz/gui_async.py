@@ -36,7 +36,7 @@ def run() -> int:
                 self.progress.emit("Running deterministic visual analysis...")
                 scene, _ = analyze_image(self.image, multiscale=self.multiscale, ocr="auto" if self.ocr_enabled else "off")
                 if self.model and self.mmproj and self.crops > 0:
-                    self.progress.emit("Checking llama.cpp vision endpoint...")
+                    self.progress.emit(f"Checking llama.cpp vision endpoint... ({self.crops} semantic crop(s))")
                     observer = LlamaServerVisionObserver(self.model, self.mmproj, base_url=self.server_url, max_model_bytes=2_500_000_000)
                     observer.check_server()
                     self.progress.emit("Analyzing selected semantic crops with SmolVLM2...")
@@ -61,7 +61,7 @@ def run() -> int:
             for r,(label,edit,cb) in enumerate(rows): grid.addWidget(QLabel(label),r,0); grid.addWidget(edit,r,1); b=QPushButton("Browse"); b.clicked.connect(cb); grid.addWidget(b,r,2)
             outer.addWidget(files)
             vision=QGroupBox("2. Vision / llama.cpp"); form=QFormLayout(vision)
-            self.port=QSpinBox(); self.port.setRange(1,65535); self.port.setValue(8080); self.ctx=QSpinBox(); self.ctx.setRange(512,32768); self.ctx.setValue(4096); self.ngl=QSpinBox(); self.ngl.setRange(0,200); self.ngl.setValue(99); self.parallel=QSpinBox(); self.parallel.setRange(1,8); self.parallel.setValue(1); self.crops=QSpinBox(); self.crops.setRange(0,32); self.crops.setValue(8); self.smol_temp=QDoubleSpinBox(); self.smol_temp.setRange(0,2); self.smol_temp.setSingleStep(.05); self.smol_temp.setValue(.1); self.smol_top_p=QDoubleSpinBox(); self.smol_top_p.setRange(.01,1); self.smol_top_p.setSingleStep(.01); self.smol_top_p.setValue(.9); self.auto_fit=QCheckBox("Auto-fit GPU layers"); self.auto_fit.setChecked(True); self.no_mmproj_offload=QCheckBox("Keep mmproj on CPU"); self.ocr=QCheckBox("Enable lightweight OCR"); self.multiscale=QCheckBox("Multiscale CV analysis"); self.multiscale.setChecked(True)
+            self.port=QSpinBox(); self.port.setRange(1,65535); self.port.setValue(8080); self.ctx=QSpinBox(); self.ctx.setRange(512,32768); self.ctx.setValue(2048); self.ngl=QSpinBox(); self.ngl.setRange(0,200); self.ngl.setValue(99); self.parallel=QSpinBox(); self.parallel.setRange(1,8); self.parallel.setValue(1); self.crops=QSpinBox(); self.crops.setRange(0,32); self.crops.setValue(2); self.smol_temp=QDoubleSpinBox(); self.smol_temp.setRange(0,2); self.smol_temp.setSingleStep(.05); self.smol_temp.setValue(.1); self.smol_top_p=QDoubleSpinBox(); self.smol_top_p.setRange(.01,1); self.smol_top_p.setSingleStep(.01); self.smol_top_p.setValue(.9); self.auto_fit=QCheckBox("Auto-fit GPU layers"); self.auto_fit.setChecked(True); self.no_mmproj_offload=QCheckBox("Keep mmproj on CPU"); self.ocr=QCheckBox("Enable lightweight OCR"); self.multiscale=QCheckBox("Multiscale CV analysis"); self.multiscale.setChecked(True)
             form.addRow("Port",self.port); form.addRow("Context",self.ctx); form.addRow("GPU layers",self.ngl); form.addRow("Server slots",self.parallel); form.addRow("Semantic crops",self.crops); form.addRow("Smol temperature",self.smol_temp); form.addRow("Smol top-p",self.smol_top_p); form.addRow(self.auto_fit); form.addRow(self.no_mmproj_offload); form.addRow(self.ocr); form.addRow(self.multiscale); outer.addWidget(vision)
             llm=QGroupBox("3. Commercial LLM (OpenAI-compatible)"); lf=QFormLayout(llm); self.llm_endpoint=QLineEdit("https://api.openai.com/v1"); self.llm_model=QLineEdit(); self.llm_key=QLineEdit(); self.llm_key.setEchoMode(QLineEdit.Password); lf.addRow("Endpoint",self.llm_endpoint); lf.addRow("Model",self.llm_model); lf.addRow("API key (not saved)",self.llm_key); outer.addWidget(llm)
             buttons=QHBoxLayout(); self.start_btn=QPushButton("Start llama.cpp"); self.check_btn=QPushButton("Check Vision"); self.stop_btn=QPushButton("Stop"); self.analyze_btn=QPushButton("Analyze + Smol"); self.send_btn=QPushButton("Send to LLM"); self.verify_btn=QPushButton("Verify TikZ"); self.save_btn=QPushButton("Save settings")
@@ -83,7 +83,7 @@ def run() -> int:
             if not all(Path(p).is_file() for p in (exe,model,mm)): QMessageBox.warning(self,APP_NAME,"Select valid llama-server.exe, model GGUF and mmproj GGUF."); return
             if self.server.state()!=QProcess.NotRunning: self._log("llama-server is already running."); return
             args=build_llama_server_command(exe,model,mm,host="127.0.0.1",port=self.port.value(),context=self.ctx.value(),gpu_layers=self.ngl.value())
-            if self.auto_fit.isChecked() and "-ngl" in args: i=args.index("-ngl"); del args[i:i+2]; args += ["--fit","on","--fit-target","384"]
+            if self.auto_fit.isChecked() and "-ngl" in args: i=args.index("-ngl"); del args[i:i+2]; args += ["--fit","on","--fit-target","768"]
             args += ["--parallel",str(self.parallel.value()),"--temp",str(self.smol_temp.value()),"--top-p",str(self.smol_top_p.value())]
             if self.no_mmproj_offload.isChecked(): args.append("--no-mmproj-offload")
             self.server.setWorkingDirectory(str(Path(exe).resolve().parent)); self._log("START COMMAND:"); self._log("  "+" ".join([exe,*args])); self.server.start(exe,args)
@@ -121,8 +121,9 @@ def run() -> int:
                 d=json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
                 for n in ("image","server_exe","model","mmproj","output_dir","pdflatex","pdftoppm","llm_endpoint","llm_model"):
                     if n in d: getattr(self,n).setText(str(d[n]))
-                for n in ("port","ctx","ngl","parallel","crops"):
+                for n in ("port","ctx","ngl","parallel"):
                     if n in d: getattr(self,n).setValue(int(d[n]))
+                if "crops" in d: self.crops.setValue(min(int(d["crops"]),2))
                 for n in ("smol_temp","smol_top_p"):
                     if n in d: getattr(self,n).setValue(float(d[n]))
                 self.auto_fit.setChecked(bool(d.get("auto_fit",True))); self.no_mmproj_offload.setChecked(bool(d.get("no_mmproj_offload",False))); self.ocr.setChecked(bool(d.get("ocr",False))); self.multiscale.setChecked(bool(d.get("multiscale",True)))
