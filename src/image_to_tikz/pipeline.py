@@ -7,18 +7,43 @@ from typing import Any
 from .analyzer_api import ImageAnalyzer
 from .curves import enrich_curves
 from .multiscale import MultiscaleAnalyzer
+from .ocr import LightweightOCRError, enrich_scene_with_ocr
 from .scene_grammar import enrich_scene_grammar
 from .serialize import to_llm_context
 from .structure import enrich_structure
 from .text_structure import enrich_text_structure
 
 
-def analyze_image(image_path: str | Path, *, multiscale: bool = True) -> tuple[Any, str]:
-    """Run the deterministic model-free image-analysis pipeline."""
+def analyze_image(
+    image_path: str | Path,
+    *,
+    multiscale: bool = True,
+    ocr: str = "auto",
+    ocr_score_threshold: float = 0.35,
+) -> tuple[Any, str]:
+    """Run the complete image-to-VIR pipeline.
+
+    The core is deterministic. Optional lightweight OCR may be enabled with
+    ``ocr='on'`` or automatically used with ``ocr='auto'`` when installed.
+    The OCR adapter accepts only lightweight models below the project's 1 GB limit.
+    """
+    if ocr not in {"auto", "on", "off"}:
+        raise ValueError("ocr must be one of: auto, on, off")
+
     path = str(image_path)
     scene = MultiscaleAnalyzer().analyze(path) if multiscale else ImageAnalyzer().analyze(path)
     enrich_curves(scene, path)
     enrich_structure(scene)
+
+    if ocr != "off":
+        try:
+            enrich_scene_with_ocr(scene, path, score_threshold=ocr_score_threshold)
+        except LightweightOCRError as exc:
+            if ocr == "on":
+                raise
+            scene.image["ocr"] = {"enabled": False, "engine": None, "reason": str(exc)}
+            scene.warnings.append(str(exc))
+
     enrich_text_structure(scene)
     enrich_scene_grammar(scene)
     return scene, to_llm_context(scene)
