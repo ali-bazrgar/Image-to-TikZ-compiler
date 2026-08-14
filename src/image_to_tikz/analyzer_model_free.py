@@ -83,11 +83,20 @@ class ModelFreeImageAnalyzer:
 
     def _lines(self, gray: np.ndarray, scale: float) -> list[VisualElement]:
         edges = cv2.Canny(cv2.GaussianBlur(gray, (3, 3), 0), 40, 140, L2gradient=True)
-        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=max(16, gray.shape[1] // 35), minLineLength=max(12, min(gray.shape[:2]) // 28), maxLineGap=max(5, min(gray.shape[:2]) // 120))
+        lines = cv2.HoughLinesP(
+            edges,
+            1,
+            np.pi / 180,
+            threshold=max(16, gray.shape[1] // 35),
+            minLineLength=max(12, min(gray.shape[:2]) // 28),
+            maxLineGap=max(5, min(gray.shape[:2]) // 120),
+        )
         out: list[VisualElement] = []
         if lines is None:
             return out
-        for i, row in enumerate(lines[:, 0, :], 1):
+        # OpenCV versions may return shape (N, 1, 4) or (N, 4).
+        rows = np.asarray(lines).reshape(-1, 4)
+        for i, row in enumerate(rows, 1):
             x1, y1, x2, y2 = map(int, row)
             length = math.hypot(x2 - x1, y2 - y1)
             if length < min(gray.shape[:2]) * 0.025:
