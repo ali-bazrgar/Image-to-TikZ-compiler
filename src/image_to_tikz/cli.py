@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from .analyzer import ImageAnalyzer
+from .pipeline import analyze_image
 from .serialize import to_compact_prompt, to_json, to_llm_context
 
 
@@ -22,29 +23,37 @@ def main() -> int:
     parser.add_argument("--vision-model", help="Model name used by the multimodal endpoint")
     parser.add_argument("--vision-api-key", default=os.getenv("VISION_API_KEY"), help="Optional API key")
     parser.add_argument("--vision-json", help="Write semantic VLM enrichment to this JSON file")
+    parser.add_argument("--full-pipeline", action="store_true", help="Enable Hough-line and relationship enrichment")
     args = parser.parse_args()
 
-    scene = ImageAnalyzer(enable_ocr=not args.no_ocr).analyze(args.image)
-    payload = to_json(scene, indent=2 if args.pretty else None)
+    vision = None
+    if args.vision_url or args.vision_json:
+        if not (args.vision_url and args.vision_model):
+            parser.error("--vision-url and --vision-model are both required when vision enrichment is enabled")
+        from .vision import VisionEnricher
+        vision = VisionEnricher(args.vision_url, args.vision_model, args.vision_api_key).analyze(args.image)
+        target = args.vision_json or "vision-enrichment.json"
+        Path(target).write_text(json.dumps(vision, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if args.full_pipeline:
+        scene, context = analyze_image(args.image, enable_ocr=not args.no_ocr, vision=vision)
+        payload = json.dumps(scene.to_dict(), ensure_ascii=False, indent=2 if args.pretty else None)
+    else:
+        scene = ImageAnalyzer(enable_ocr=not args.no_ocr).analyze(args.image)
+        payload = to_json(scene, indent=2 if args.pretty else None)
+        context = to_llm_context(scene)
+
     if args.output:
         Path(args.output).write_text(payload, encoding="utf-8")
     else:
         print(payload)
     if args.context:
-        Path(args.context).write_text(to_llm_context(scene), encoding="utf-8")
+        Path(args.context).write_text(context, encoding="utf-8")
     if args.prompt:
         Path(args.prompt).write_text(to_compact_prompt(scene), encoding="utf-8")
     if args.debug_image:
         from .render import render_debug
         render_debug(args.image, scene, args.debug_image)
-
-    if args.vision_url or args.vision_json:
-        if not (args.vision_url and args.vision_model):
-            parser.error("--vision-url and --vision-model are both required when vision enrichment is enabled")
-        from .vision import VisionEnricher
-        enriched = VisionEnricher(args.vision_url, args.vision_model, args.vision_api_key).analyze(args.image)
-        target = args.vision_json or "vision-enrichment.json"
-        Path(target).write_text(json.dumps(enriched, ensure_ascii=False, indent=2), encoding="utf-8")
 
     return 0
 
