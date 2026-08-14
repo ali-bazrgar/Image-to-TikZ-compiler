@@ -10,7 +10,7 @@ def test_llm_context_is_compact_and_has_no_duplicate_wrapper():
         coordinate_system={"origin": "top-left"},
     )
     context = to_llm_context(scene)
-    assert context.startswith("IMAGE_TO_TIKZ_VISUAL_RECORD v2")
+    assert context.startswith("IMAGE_TO_TIKZ_VISUAL_RECORD v3")
     assert "DOWNSTREAM_TASK" in context
     assert "<VISUAL_RECORD>" not in context
     assert "ELEMENTS" in context
