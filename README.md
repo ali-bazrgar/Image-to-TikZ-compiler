@@ -1,90 +1,102 @@
 # Image-to-TikZ-compiler
 
-A strictly model-free image-analysis front-end for diagram-to-TikZ systems.
+A model-independent image-analysis front-end for diagram-to-TikZ systems.
 
 ## Core contract
 
-This repository does **not** run an AI model. Its job ends at a deterministic, text-readable representation of the input image. A downstream LLM is responsible for semantic interpretation and TikZ generation.
+The deterministic core never requires AI. An optional lightweight OCR adapter may be enabled, but this project deliberately rejects the use of models larger than 1 GB. The downstream LLM is outside the compiler and consumes the generated Visual Intermediate Representation (VIR).
 
 ```text
 image
   ↓
-normalization / denoising
+global + overlapping local analysis
   ↓
-global OpenCV geometry extraction
+geometry / curves / paths
   ↓
-overlapping local-window analysis
+stroke + topology analysis
   ↓
-fusion / duplicate suppression
+text-region structure
   ↓
-shapes + line segments + endpoints
+(optional) lightweight OCR < 1 GB
   ↓
-text-like region detection
+groups + repetition + symmetry + scene grammar
   ↓
-spatial / alignment / connection candidates
+Visual Intermediate Representation
   ↓
-higher-level structure: groups + repetition + symmetry + stroke features
+canonical JSON + spatial natural-language context
   ↓
-Visual Intermediate Representation (VIR)
-  ↓
-canonical JSON + deterministic natural-language context
-  ↓
-ANY external text LLM
+ANY downstream text LLM
   ↓
 TikZ
 ```
 
-The important design goal is **recoverability**, not captioning: the generated representation exposes what the computer can measure about the image, where it occurs, how elements relate, recurring structure, and where uncertainty remains.
-
 ## Runtime dependencies
 
-Required runtime libraries are only:
+Required runtime libraries:
 
 - OpenCV
 - NumPy
 - Pillow
 
-No model weights, inference server, API key, OCR engine, or network service is required.
+Optional lightweight OCR:
 
-## What is measured
+```bash
+pip install -e '.[ocr]'
+```
 
-The model-free analyzer currently extracts:
+The optional OCR path uses RapidOCR/ONNX Runtime mobile-style models. Current RapidOCR/PaddleOCR documentation lists mobile detection and recognition models in the single- and tens-of-megabytes range, far below the project's 1 GB model limit. citeturn968545search2turn968545search3
+
+No large VLM, large language model, inference server, API key, or network service is required by the compiler.
+
+## Current analysis layers
+
+The deterministic engine measures:
 
 - quadrilateral, polygon, circle/ellipse candidates
-- line segments with endpoints, length, angle, and orientation
-- possible junction/arrowhead endpoint candidates
-- long horizontal/vertical axis or baseline candidates
-- text-like regions (location and size, without inventing character content)
-- horizontal and vertical alignment
-- proximity
-- line-to-shape connection candidates
-- endpoint-to-shape connection candidates
-- structural groups formed from connection evidence
+- line segments with endpoints, length, angle and orientation
+- curve/path candidates and sampled geometry
+- endpoint, junction and crossing candidates
+- possible arrowhead, axis/baseline and dimension-line patterns
+- stroke orientation and conservative stroke-style evidence
+- text-like regions, glyph runs and baseline candidates
+- stacked/superscript/subscript-like layout candidates
+- label/annotation relationships
+- horizontal/vertical alignment and proximity
+- connection topology and structure groups
 - repeated visual families
-- approximate horizontal/vertical mirror symmetry
-- stroke orientation and normalized length features
+- approximate mirror symmetry
+- spatial regions and scene layout
 - normalized coordinates and confidence values
 
-The default pipeline is now multiscale. Large images are analyzed globally and through overlapping local windows so small primitives have a better chance of being detected. Local detections are translated back to global coordinates and fused with deterministic duplicate suppression.
+When OCR is available, recognized text is merged back into the same VIR without replacing the measured geometry.
 
-The core deliberately does **not** claim that a measured primitive has a domain-specific meaning. For example, a long horizontal line may be an axis, baseline, dimension line, or ordinary connector. The downstream LLM receives the evidence and decides among hypotheses.
+## Installation
 
-## Install
+Core only:
 
 ```bash
 pip install -e .
 ```
 
-For tests:
+Core + tests:
 
 ```bash
 pip install -e '.[test]'
 ```
 
+Core + lightweight OCR:
+
+```bash
+pip install -e '.[ocr]'
+```
+
 ## Usage
+
+Without optional OCR:
 
 ```bash
 image-to-vir diagram.png \
+  --ocr off \
   --pretty \
   -o scene.json \
   --context scene.txt \
@@ -92,34 +104,55 @@ image-to-vir diagram.png \
   --debug-image debug.png
 ```
 
-Outputs:
+Automatic lightweight OCR when installed:
 
-- `scene.json`: authoritative structured VIR.
-- `scene.txt`: deterministic natural-language representation designed for a text-only LLM.
-- `tikz-prompt.txt`: a wrapper prompt around the same evidence.
-- `debug.png`: visual audit of detected primitives and text regions.
+```bash
+image-to-vir diagram.png \
+  --ocr auto \
+  --pretty \
+  -o scene.json \
+  --context scene.txt
+```
 
-## LLM hand-off
+Require OCR and fail clearly when it is not installed:
 
-The downstream LLM should treat the generated data as evidence, not as a pre-decided semantic interpretation. It should first infer the diagram class and topology, then produce TikZ while preserving measured geometry and explicitly marking uncertain assumptions.
+```bash
+image-to-vir diagram.png --ocr on
+```
 
-The compiler therefore remains independent of the choice of GPT, Qwen, Llama, Gemma, or any other external model.
+Disable multiscale analysis for faster debugging:
+
+```bash
+image-to-vir diagram.png --no-multiscale --ocr off
+```
+
+## Output
+
+`scene.json` is the authoritative structured representation.
+
+`scene.txt` is the canonical natural-language representation intended for any text-only LLM. It includes pixel coordinates, normalized coordinates, geometry, relations, topology, spatial narrative, uncertainty and optional OCR text.
+
+`tikz-prompt.txt` wraps the same record in a generic reconstruction instruction.
+
+`debug.png` provides a visual audit of what the computer-vision stages detected.
+
+## Important design rule
+
+Observed geometry is never silently replaced by semantic guesses. Candidates such as "arrowhead", "axis", "dimension line", "label", "symmetry" and "connection" remain explicitly marked as hypotheses with evidence/confidence.
+
+The compiler is independent of the downstream model. GPT, Qwen, Llama, Gemma or another text/code model can consume the same VIR. The only model-size restriction applies to optional models shipped/used by this compiler: **1 GB maximum**.
 
 ## Verification direction
 
-A later stage can close the reconstruction loop without changing the model-free contract:
+The eventual reconstruction loop can remain outside the model-free analysis contract:
 
 ```text
-VIR → LLM-generated TikZ → LaTeX/SVG render
-                         ↓
-                  image comparison
-                         ↓
-                  discrepancy report
-                         ↓
-                  revised LLM prompt
+VIR → downstream LLM → TikZ → LaTeX/SVG render
+                           ↓
+                    image comparison
+                           ↓
+                    discrepancy report
 ```
-
-The comparison stage is an evaluator; it does not become part of the image-understanding core.
 
 ## Tests
 
