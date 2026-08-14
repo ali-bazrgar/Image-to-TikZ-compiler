@@ -1,3 +1,3 @@
-"""Image-to-TikZ compiler and Visual Intermediate Representation toolkit."""
+"""Strictly model-free Image-to-TikZ visual analysis toolkit."""
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
