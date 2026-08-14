@@ -3,14 +3,12 @@ from __future__ import annotations
 import json
 import os
 import sys
-import urllib.error
-import urllib.request
 from functools import partial
 from pathlib import Path
 
 from .golden_prompt import build_golden_prompt
 from .llama_semantic import enrich_scene_with_llama_server_vlm
-from .llama_server_vlm import LlamaServerVLMError, LlamaServerVisionObserver, build_llama_server_command
+from .llama_server_vlm import LlamaServerVisionObserver, build_llama_server_command
 from .llm_client import chat_completion
 from .pipeline import analyze_image
 from .tikz_verifier import compile_and_compare
@@ -48,6 +46,7 @@ def run() -> int:
         def _build(self) -> None:
             root = QWidget(); self.setCentralWidget(root)
             outer = QVBoxLayout(root)
+
             files = QGroupBox("1. Files")
             grid = QGridLayout(files)
             self.image = QLineEdit(); self.server_exe = QLineEdit(); self.model = QLineEdit(); self.mmproj = QLineEdit()
@@ -65,14 +64,19 @@ def run() -> int:
             form = QFormLayout(vision)
             self.port = QSpinBox(); self.port.setRange(1, 65535); self.port.setValue(8080)
             self.ctx = QSpinBox(); self.ctx.setRange(512, 32768); self.ctx.setValue(4096)
-            self.ngl = QSpinBox(); self.ngl.setRange(0, 200); self.ngl.setValue(99)
+            self.auto_gpu = QCheckBox("Auto-fit GPU layers (recommended for 3GB VRAM)"); self.auto_gpu.setChecked(True)
+            self.ngl = QSpinBox(); self.ngl.setRange(0, 200); self.ngl.setValue(99); self.ngl.setEnabled(False)
+            self.auto_gpu.toggled.connect(lambda checked: self.ngl.setEnabled(not checked))
+            self.parallel = QSpinBox(); self.parallel.setRange(1, 8); self.parallel.setValue(1)
+            self.fit_target = QSpinBox(); self.fit_target.setRange(128, 1024); self.fit_target.setValue(384)
             self.crops = QSpinBox(); self.crops.setRange(0, 32); self.crops.setValue(8)
             self.smol_temp = QDoubleSpinBox(); self.smol_temp.setRange(0.0, 2.0); self.smol_temp.setSingleStep(0.05); self.smol_temp.setValue(0.1)
             self.smol_top_p = QDoubleSpinBox(); self.smol_top_p.setRange(0.01, 1.0); self.smol_top_p.setSingleStep(0.01); self.smol_top_p.setValue(0.9)
             self.no_mmproj_offload = QCheckBox("Keep mmproj on CPU (useful if VRAM is tight)")
             self.ocr = QCheckBox("Enable lightweight OCR")
             self.multiscale = QCheckBox("Multiscale CV analysis"); self.multiscale.setChecked(True)
-            form.addRow("Port", self.port); form.addRow("Context", self.ctx); form.addRow("GPU layers", self.ngl)
+            form.addRow("Port", self.port); form.addRow("Context", self.ctx); form.addRow(self.auto_gpu); form.addRow("Manual GPU layers", self.ngl)
+            form.addRow("Server slots", self.parallel); form.addRow("VRAM safety margin (MiB)", self.fit_target)
             form.addRow("Semantic crops", self.crops); form.addRow("Smol temperature", self.smol_temp); form.addRow("Smol top-p", self.smol_top_p)
             form.addRow(self.no_mmproj_offload); form.addRow(self.ocr); form.addRow(self.multiscale)
             outer.addWidget(vision)
@@ -139,8 +143,13 @@ def run() -> int:
                     QMessageBox.critical(self, APP_NAME, f"{label} file not found:\n{p}"); return
             if self.server.state() != QProcess.NotRunning:
                 self._log("llama-server process is already running."); return
-            args = build_llama_server_command(exe, model, mm, host="127.0.0.1", port=self.port.value(), context=self.ctx.value(), gpu_layers=self.ngl.value())
-            if self.no_mmproj_offload.isChecked(): args.append("--no-mmproj-offload")
+            gpu_layers = None if self.auto_gpu.isChecked() else self.ngl.value()
+            args = build_llama_server_command(
+                exe, model, mm,
+                host="127.0.0.1", port=self.port.value(), context=self.ctx.value(),
+                gpu_layers=gpu_layers, parallel=self.parallel.value(), fit_target_mib=self.fit_target.value(),
+                no_mmproj_offload=self.no_mmproj_offload.isChecked(),
+            )
             args += ["--temp", str(self.smol_temp.value()), "--top-p", str(self.smol_top_p.value())]
             self.server.setWorkingDirectory(str(Path(exe).resolve().parent))
             self._log("START COMMAND:"); self._log("  " + " ".join([exe, *args])); self._log("WORKING DIRECTORY: " + str(Path(exe).resolve().parent))
@@ -219,12 +228,16 @@ def run() -> int:
         def _drain_server_stderr(self): self._log(bytes(self.server.readAllStandardError()).decode(errors="replace"))
 
         def save(self):
-            data = {"image": self.image.text(), "server_exe": self.server_exe.text(), "model": self.model.text(), "mmproj": self.mmproj.text(),
-                    "output_dir": self.output_dir.text(), "pdflatex": self.pdflatex.text(), "pdftoppm": self.pdftoppm.text(),
-                    "port": self.port.value(), "ctx": self.ctx.value(), "ngl": self.ngl.value(), "crops": self.crops.value(),
-                    "smol_temp": self.smol_temp.value(), "smol_top_p": self.smol_top_p.value(), "no_mmproj_offload": self.no_mmproj_offload.isChecked(),
-                    "ocr": self.ocr.isChecked(), "multiscale": self.multiscale.isChecked(), "llm_endpoint": self.llm_endpoint.text(), "llm_model": self.llm_model.text()}
-            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True); CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            data = {
+                "image": self.image.text(), "server_exe": self.server_exe.text(), "model": self.model.text(), "mmproj": self.mmproj.text(),
+                "output_dir": self.output_dir.text(), "pdflatex": self.pdflatex.text(), "pdftoppm": self.pdftoppm.text(),
+                "port": self.port.value(), "ctx": self.ctx.value(), "auto_gpu": self.auto_gpu.isChecked(), "ngl": self.ngl.value(),
+                "parallel": self.parallel.value(), "fit_target": self.fit_target.value(), "crops": self.crops.value(),
+                "smol_temp": self.smol_temp.value(), "smol_top_p": self.smol_top_p.value(), "no_mmproj_offload": self.no_mmproj_offload.isChecked(),
+                "ocr": self.ocr.isChecked(), "multiscale": self.multiscale.isChecked(), "llm_endpoint": self.llm_endpoint.text(), "llm_model": self.llm_model.text(),
+            }
+            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
             self._log(f"SETTINGS SAVED: {CONFIG_PATH}")
 
         def _load(self):
@@ -233,13 +246,16 @@ def run() -> int:
                 d = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
                 for name in ("image", "server_exe", "model", "mmproj", "output_dir", "pdflatex", "pdftoppm", "llm_endpoint", "llm_model"):
                     if name in d: getattr(self, name).setText(str(d[name]))
-                for name in ("port", "ctx", "ngl", "crops"):
+                for name in ("port", "ctx", "ngl", "parallel", "fit_target", "crops"):
                     if name in d: getattr(self, name).setValue(int(d[name]))
                 for name in ("smol_temp", "smol_top_p"):
                     if name in d: getattr(self, name).setValue(float(d[name]))
+                self.auto_gpu.setChecked(bool(d.get("auto_gpu", True)))
                 self.no_mmproj_offload.setChecked(bool(d.get("no_mmproj_offload", False)))
-                self.ocr.setChecked(bool(d.get("ocr", False))); self.multiscale.setChecked(bool(d.get("multiscale", True)))
-            except Exception as exc: self._log(f"SETTINGS LOAD ERROR: {exc}")
+                self.ocr.setChecked(bool(d.get("ocr", False)))
+                self.multiscale.setChecked(bool(d.get("multiscale", True)))
+            except Exception as exc:
+                self._log(f"SETTINGS LOAD ERROR: {exc}")
 
     app = QApplication(sys.argv); window = Window(); window.show(); return app.exec()
 
