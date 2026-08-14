@@ -19,6 +19,8 @@ text-like region detection
   ↓
 spatial / alignment / connection candidates
   ↓
+higher-level structure: groups + repetition + symmetry + stroke features
+  ↓
 Visual Intermediate Representation (VIR)
   ↓
 canonical JSON + deterministic natural-language context
@@ -28,7 +30,7 @@ ANY external text LLM
 TikZ
 ```
 
-The important design goal is **recoverability**, not captioning: the generated representation exposes what the computer can measure about the image, where it occurs, how elements relate, and where uncertainty remains.
+The important design goal is **recoverability**, not captioning: the generated representation exposes what the computer can measure about the image, where it occurs, how elements relate, recurring structure, and where uncertainty remains.
 
 ## Runtime dependencies
 
@@ -52,6 +54,11 @@ The model-free analyzer currently extracts:
 - horizontal and vertical alignment
 - proximity
 - line-to-shape connection candidates
+- endpoint-to-shape connection candidates
+- structural groups formed from connection evidence
+- repeated visual families
+- approximate horizontal/vertical mirror symmetry
+- stroke orientation and normalized length features
 - normalized coordinates and confidence values
 
 The core deliberately does **not** claim that a measured primitive has a domain-specific meaning. For example, a long horizontal line may be an axis, baseline, dimension line, or ordinary connector. The downstream LLM receives the evidence and decides among hypotheses.
