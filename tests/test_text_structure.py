@@ -14,8 +14,9 @@ def test_text_structure_is_model_free(tmp_path):
     path = tmp_path / "text.png"
     assert cv2.imwrite(str(path), image)
 
-    scene, context = analyze_image(path, multiscale=False)
+    scene, context = analyze_image(path, multiscale=False, ocr="off")
 
     assert scene.texts
-    assert any(t.language and "candidate" in t.language for t in scene.texts)
+    assert any(t.role and "candidate" in t.role for t in scene.texts)
     assert "TEXT_REGIONS:" in context
+    assert "role=" in context
