@@ -1,6 +1,0 @@
-from .analyzer_model_free import ModelFreeImageAnalyzer
-
-
-def analyze_image(image_path):
-    scene = ModelFreeImageAnalyzer().analyze(image_path)
-    return scene, scene
